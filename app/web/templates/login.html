@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Admin Login</h1>
+    <p class="lead">Use the configured WEB_ADMIN_TOKEN to access the operations console.</p>
+  </div>
+</div>
+{% if auth_required %}
+  <form method="post" action="/login" class="panel">
+    <label>
+      WEB_ADMIN_TOKEN
+      <input name="token" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Login</button>
+  </form>
+{% else %}
+  <div class="notice">WEB_ADMIN_TOKEN is not set. Authentication is currently disabled.</div>
+  <a class="button" href="/">Open Dashboard</a>
+{% endif %}
+{% endblock %}

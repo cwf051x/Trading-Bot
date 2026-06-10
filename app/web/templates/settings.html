@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="lead">Update paper-mode symbols, account sizing, polling cadence, and MomentumOIStrategy parameters.</p>
+  </div>
+  <span class="badge ok">Paper Only</span>
+</div>
+
+{% if message %}
+  <div class="notice">{{ message }}</div>
+{% endif %}
+
+<form method="post" action="/settings">
+  <section class="panel">
+    <h2 style="margin-top: 0;">Runtime</h2>
+    <div class="form-grid">
+      <label>
+        WATCH_SYMBOLS
+        <input name="watch_symbols" value="{{ ','.join(settings.active_symbols) }}" required>
+      </label>
+      <label>
+        DEFAULT_SYMBOL
+        <input name="default_symbol" value="{{ settings.default_symbol }}" required>
+      </label>
+      <label>
+        DEFAULT_TIMEFRAME
+        <input name="default_timeframe" value="{{ settings.default_timeframe }}" required>
+      </label>
+      <label>
+        ACCOUNT_EQUITY
+        <input name="account_equity" type="number" step="0.01" value="{{ settings.account_equity }}" required>
+      </label>
+      <label>
+        BTC_DROP_THRESHOLD_15M
+        <input name="btc_drop_threshold_15m" type="number" step="0.001" value="{{ settings.btc_drop_threshold_15m }}" required>
+      </label>
+      <label>
+        POLL_INTERVAL_SECONDS
+        <input name="poll_interval_seconds" type="number" step="1" value="{{ settings.poll_interval_seconds }}" required>
+      </label>
+      <label>
+        KLINE_LIMIT
+        <input name="kline_limit" type="number" step="1" value="{{ settings.kline_limit }}" required>
+      </label>
+      <label>
+        PAPER_LEVERAGE
+        <input name="paper_leverage" type="number" step="0.1" value="{{ settings.paper_leverage }}" required>
+      </label>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top: 0;">MomentumOIStrategy</h2>
+    <div class="form-grid">
+      <label>
+        STRATEGY_BREAKOUT_WINDOW
+        <input name="strategy_breakout_window" type="number" step="1" value="{{ settings.strategy_breakout_window }}" required>
+      </label>
+      <label>
+        STRATEGY_VOLUME_WINDOW
+        <input name="strategy_volume_window" type="number" step="1" value="{{ settings.strategy_volume_window }}" required>
+      </label>
+      <label>
+        STRATEGY_VOLUME_MULTIPLIER
+        <input name="strategy_volume_multiplier" type="number" step="0.1" value="{{ settings.strategy_volume_multiplier }}" required>
+      </label>
+      <label>
+        STRATEGY_STOP_LOSS_PCT
+        <input name="strategy_stop_loss_pct" type="number" step="0.001" value="{{ settings.strategy_stop_loss_pct }}" required>
+      </label>
+      <label>
+        STRATEGY_TAKE_PROFIT_PCT
+        <input name="strategy_take_profit_pct" type="number" step="0.001" value="{{ settings.strategy_take_profit_pct }}" required>
+      </label>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 style="margin-top: 0;">Market Alert Radar</h2>
+    <div class="form-grid">
+      <label>
+        ALERT_RADAR_ENABLED
+        <select name="alert_radar_enabled">
+          <option value="true" {% if settings.alert_radar_enabled %}selected{% endif %}>true</option>
+          <option value="false" {% if not settings.alert_radar_enabled %}selected{% endif %}>false</option>
+        </select>
+      </label>
+      <label>
+        ALERT_SCAN_INTERVAL_SECONDS
+        <input name="alert_scan_interval_seconds" type="number" step="1" value="{{ settings.alert_scan_interval_seconds }}" required>
+      </label>
+      <label>
+        ALERT_TOP_GAINERS_LIMIT
+        <input name="alert_top_gainers_limit" type="number" step="1" value="{{ settings.alert_top_gainers_limit }}" required>
+      </label>
+      <label>
+        ALERT_MIN_24H_QUOTE_VOLUME_USDT
+        <input name="alert_min_24h_quote_volume_usdt" type="number" step="1" value="{{ settings.alert_min_24h_quote_volume_usdt }}" required>
+      </label>
+      <label>
+        ALERT_BLACKLIST
+        <input name="alert_blacklist" value="{{ ','.join(settings.alert_blacklist) }}">
+      </label>
+      <label>
+        ALERT_WATCHLIST
+        <input name="alert_watchlist" value="{{ ','.join(settings.alert_watchlist) }}">
+      </label>
+      <label>
+        ALERT_SEND_A_LEVEL
+        <select name="alert_send_a_level">
+          <option value="true" {% if settings.alert_send_a_level %}selected{% endif %}>true</option>
+          <option value="false" {% if not settings.alert_send_a_level %}selected{% endif %}>false</option>
+        </select>
+      </label>
+      <label>
+        ALERT_SEND_B_LEVEL
+        <select name="alert_send_b_level">
+          <option value="true" {% if settings.alert_send_b_level %}selected{% endif %}>true</option>
+          <option value="false" {% if not settings.alert_send_b_level %}selected{% endif %}>false</option>
+        </select>
+      </label>
+      <label>
+        ALERT_SEND_C_LEVEL
+        <select name="alert_send_c_level">
+          <option value="true" {% if settings.alert_send_c_level %}selected{% endif %}>true</option>
+          <option value="false" {% if not settings.alert_send_c_level %}selected{% endif %}>false</option>
+        </select>
+      </label>
+      <label>
+        ALERT_COOLDOWN_A_SECONDS
+        <input name="alert_cooldown_a_seconds" type="number" step="1" value="{{ settings.alert_cooldown_a_seconds }}" required>
+      </label>
+      <label>
+        ALERT_COOLDOWN_B_SECONDS
+        <input name="alert_cooldown_b_seconds" type="number" step="1" value="{{ settings.alert_cooldown_b_seconds }}" required>
+      </label>
+      <label>
+        ALERT_COOLDOWN_C_SECONDS
+        <input name="alert_cooldown_c_seconds" type="number" step="1" value="{{ settings.alert_cooldown_c_seconds }}" required>
+      </label>
+      <label>
+        ALERT_SURGE_3M_THRESHOLD
+        <input name="alert_surge_3m_threshold" type="number" step="0.001" value="{{ settings.alert_surge_3m_threshold }}" required>
+      </label>
+      <label>
+        ALERT_SURGE_5M_THRESHOLD
+        <input name="alert_surge_5m_threshold" type="number" step="0.001" value="{{ settings.alert_surge_5m_threshold }}" required>
+      </label>
+      <label>
+        ALERT_SURGE_15M_THRESHOLD
+        <input name="alert_surge_15m_threshold" type="number" step="0.001" value="{{ settings.alert_surge_15m_threshold }}" required>
+      </label>
+      <label>
+        ALERT_VOLUME_RATIO_THRESHOLD
+        <input name="alert_volume_ratio_threshold" type="number" step="0.1" value="{{ settings.alert_volume_ratio_threshold }}" required>
+      </label>
+      <label>
+        ALERT_PULLBACK_MIN_RATIO
+        <input name="alert_pullback_min_ratio" type="number" step="0.001" value="{{ settings.alert_pullback_min_ratio }}" required>
+      </label>
+      <label>
+        ALERT_PULLBACK_MAX_RATIO
+        <input name="alert_pullback_max_ratio" type="number" step="0.001" value="{{ settings.alert_pullback_max_ratio }}" required>
+      </label>
+      <label>
+        ALERT_BTC_DUMP_15M_THRESHOLD
+        <input name="alert_btc_dump_15m_threshold" type="number" step="0.001" value="{{ settings.alert_btc_dump_15m_threshold }}" required>
+      </label>
+      <label>
+        ALERT_HIGH_RISK_15M_CHANGE
+        <input name="alert_high_risk_15m_change" type="number" step="0.001" value="{{ settings.alert_high_risk_15m_change }}" required>
+      </label>
+      <label>
+        ALERT_HIGH_RISK_1H_CHANGE
+        <input name="alert_high_risk_1h_change" type="number" step="0.001" value="{{ settings.alert_high_risk_1h_change }}" required>
+      </label>
+      <label>
+        ALERT_MIN_BREAKOUT_CLOSE_POSITION
+        <input name="alert_min_breakout_close_position" type="number" step="0.01" value="{{ settings.alert_min_breakout_close_position }}" required>
+      </label>
+      <label>
+        ALERT_SECOND_LEG_MIN_CLOSE_POSITION
+        <input name="alert_second_leg_min_close_position" type="number" step="0.01" value="{{ settings.alert_second_leg_min_close_position }}" required>
+      </label>
+      <label>
+        ALERT_PULLBACK_VOLUME_CONTRACTION_MAX
+        <input name="alert_pullback_volume_contraction_max" type="number" step="0.1" value="{{ settings.alert_pullback_volume_contraction_max }}" required>
+      </label>
+      <label>
+        ALERT_OVERHEAT_RSI
+        <input name="alert_overheat_rsi" type="number" step="1" value="{{ settings.alert_overheat_rsi }}" required>
+      </label>
+    </div>
+  </section>
+
+  <div class="notice">Saved settings are written to .env. Restart the paper service after changing values.</div>
+  <button type="submit">Save Settings</button>
+</form>
+{% endblock %}

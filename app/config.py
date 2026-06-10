@@ -1,0 +1,137 @@
+"""Application configuration loaded from environment variables.
+从环境变量和 `.env` 加载应用配置。
+"""
+
+from __future__ import annotations
+
+from enum import Enum
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+class RunMode(str, Enum):
+    """Supported runtime modes.
+    支持的运行模式。
+    """
+
+    BACKTEST = "backtest"
+    PAPER = "paper"
+    LIVE = "live"
+
+
+class Settings(BaseSettings):
+    """Runtime settings read from `.env` and process environment.
+    从 `.env` 文件和进程环境变量读取的运行时配置。
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    binance_api_key: str = Field(default="", alias="BINANCE_API_KEY")
+    binance_api_secret: str = Field(default="", alias="BINANCE_API_SECRET")
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    telegram_proxy: str = Field(default="", alias="TELEGRAM_PROXY")
+    database_path: Path = Field(default=Path("data/trading_bot.sqlite"), alias="DATABASE_PATH")
+    run_mode: RunMode = Field(default=RunMode.PAPER, alias="RUN_MODE")
+    enable_live_trading: bool = Field(default=False, alias="ENABLE_LIVE_TRADING")
+    btc_drop_threshold_15m: float = Field(default=0.03, alias="BTC_DROP_THRESHOLD_15M")
+    account_equity: float = Field(default=10_000.0, alias="ACCOUNT_EQUITY")
+    default_symbol: str = Field(default="BTC/USDT:USDT", alias="DEFAULT_SYMBOL")
+    watch_symbols: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="WATCH_SYMBOLS")
+    default_timeframe: str = Field(default="15m", alias="DEFAULT_TIMEFRAME")
+    exchange_proxy: str = Field(default="", alias="EXCHANGE_PROXY")
+    poll_interval_seconds: int = Field(default=60, alias="POLL_INTERVAL_SECONDS")
+    kline_limit: int = Field(default=120, alias="KLINE_LIMIT")
+    paper_leverage: float = Field(default=1.0, alias="PAPER_LEVERAGE")
+    strategy_breakout_window: int = Field(default=20, alias="STRATEGY_BREAKOUT_WINDOW")
+    strategy_volume_window: int = Field(default=20, alias="STRATEGY_VOLUME_WINDOW")
+    strategy_volume_multiplier: float = Field(default=1.5, alias="STRATEGY_VOLUME_MULTIPLIER")
+    strategy_stop_loss_pct: float = Field(default=0.02, alias="STRATEGY_STOP_LOSS_PCT")
+    strategy_take_profit_pct: float = Field(default=0.04, alias="STRATEGY_TAKE_PROFIT_PCT")
+    web_admin_token: str = Field(default="", alias="WEB_ADMIN_TOKEN")
+    web_host: str = Field(default="127.0.0.1", alias="WEB_HOST")
+    web_port: int = Field(default=8000, alias="WEB_PORT")
+    alert_radar_enabled: bool = Field(default=True, alias="ALERT_RADAR_ENABLED")
+    alert_scan_interval_seconds: int = Field(default=60, alias="ALERT_SCAN_INTERVAL_SECONDS")
+    alert_top_gainers_limit: int = Field(default=50, alias="ALERT_TOP_GAINERS_LIMIT")
+    alert_min_24h_quote_volume_usdt: float = Field(default=10_000_000.0, alias="ALERT_MIN_24H_QUOTE_VOLUME_USDT")
+    alert_blacklist: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="ALERT_BLACKLIST")
+    alert_watchlist: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="ALERT_WATCHLIST")
+    alert_send_a_level: bool = Field(default=True, alias="ALERT_SEND_A_LEVEL")
+    alert_send_b_level: bool = Field(default=True, alias="ALERT_SEND_B_LEVEL")
+    alert_send_c_level: bool = Field(default=False, alias="ALERT_SEND_C_LEVEL")
+    alert_cooldown_a_seconds: int = Field(default=600, alias="ALERT_COOLDOWN_A_SECONDS")
+    alert_cooldown_b_seconds: int = Field(default=1200, alias="ALERT_COOLDOWN_B_SECONDS")
+    alert_cooldown_c_seconds: int = Field(default=3600, alias="ALERT_COOLDOWN_C_SECONDS")
+    alert_surge_3m_threshold: float = Field(default=0.015, alias="ALERT_SURGE_3M_THRESHOLD")
+    alert_surge_5m_threshold: float = Field(default=0.025, alias="ALERT_SURGE_5M_THRESHOLD")
+    alert_surge_15m_threshold: float = Field(default=0.04, alias="ALERT_SURGE_15M_THRESHOLD")
+    alert_volume_ratio_threshold: float = Field(default=1.8, alias="ALERT_VOLUME_RATIO_THRESHOLD")
+    alert_pullback_min_ratio: float = Field(default=0.05, alias="ALERT_PULLBACK_MIN_RATIO")
+    alert_pullback_max_ratio: float = Field(default=0.15, alias="ALERT_PULLBACK_MAX_RATIO")
+    alert_btc_dump_15m_threshold: float = Field(default=-0.008, alias="ALERT_BTC_DUMP_15M_THRESHOLD")
+    alert_high_risk_15m_change: float = Field(default=0.08, alias="ALERT_HIGH_RISK_15M_CHANGE")
+    alert_high_risk_1h_change: float = Field(default=0.18, alias="ALERT_HIGH_RISK_1H_CHANGE")
+    alert_min_breakout_close_position: float = Field(default=0.65, alias="ALERT_MIN_BREAKOUT_CLOSE_POSITION")
+    alert_second_leg_min_close_position: float = Field(default=0.55, alias="ALERT_SECOND_LEG_MIN_CLOSE_POSITION")
+    alert_pullback_volume_contraction_max: float = Field(default=1.0, alias="ALERT_PULLBACK_VOLUME_CONTRACTION_MAX")
+    alert_overheat_rsi: float = Field(default=82.0, alias="ALERT_OVERHEAT_RSI")
+
+    @field_validator("watch_symbols", mode="before")
+    @classmethod
+    def parse_watch_symbols(cls, value: object) -> list[str]:
+        """Parse comma-separated watch symbols from `.env`.
+        从 `.env` 解析逗号分隔的监控交易对。
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [symbol.strip() for symbol in value.split(",") if symbol.strip()]
+        if isinstance(value, list):
+            return [str(symbol).strip() for symbol in value if str(symbol).strip()]
+        raise TypeError("WATCH_SYMBOLS must be a comma-separated string or list")
+
+    @field_validator("alert_blacklist", "alert_watchlist", mode="before")
+    @classmethod
+    def parse_alert_symbol_lists(cls, value: object) -> list[str]:
+        """Parse comma-separated alert symbol lists from `.env`.
+        从 `.env` 解析行情雷达交易对列表。
+        """
+
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [symbol.strip() for symbol in value.split(",") if symbol.strip()]
+        if isinstance(value, list):
+            return [str(symbol).strip() for symbol in value if str(symbol).strip()]
+        raise TypeError("Alert symbol lists must be comma-separated strings or lists")
+
+    @property
+    def active_symbols(self) -> list[str]:
+        """Return configured watch symbols with default symbol fallback.
+        返回实际监控交易对，未配置时回退到默认交易对。
+        """
+
+        return self.watch_symbols or [self.default_symbol]
+
+    @property
+    def live_trading_allowed(self) -> bool:
+        """Return whether real orders may be attempted.
+        判断当前配置是否允许尝试真实下单。
+        """
+
+        return self.run_mode == RunMode.LIVE and self.enable_live_trading
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return cached application settings.
+    返回带缓存的应用配置对象。
+    """
+
+    return Settings()

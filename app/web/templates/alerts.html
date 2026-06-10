@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Market Alerts</h1>
+    <p class="lead">Recent radar signals, Telegram delivery status, and suggested action. Signals are alerts only, not trading instructions.</p>
+  </div>
+  <span class="badge ok">No Live Orders</span>
+</div>
+
+{% if rows %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Symbol</th>
+        <th>Type</th>
+        <th>Level</th>
+        <th>Score</th>
+        <th>Price</th>
+        <th>15m</th>
+        <th>1h</th>
+        <th>24h</th>
+        <th>Volume</th>
+        <th>Telegram</th>
+        <th>Action</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.timestamp | datetime_ms }}</td>
+        <td>{{ row.symbol }}</td>
+        <td>{{ row.alert_type }}</td>
+        <td><span class="badge {% if row.level == 'A' %}danger{% elif row.level == 'B' %}warn{% else %}ok{% endif %}">{{ row.level }}</span></td>
+        <td>{{ row.score }}</td>
+        <td>{{ "%.8g"|format(row.price) }}</td>
+        <td>{{ row.price_change_15m | percent }}</td>
+        <td>{{ row.price_change_1h | percent }}</td>
+        <td>{{ row.price_change_24h | percent }}</td>
+        <td>{{ "%.2fx"|format(row.volume_ratio) }}</td>
+        <td>{% if row.sent_to_telegram %}<span class="ok">sent</span>{% else %}<span class="meta">stored</span>{% endif %}</td>
+        <td class="reason">{{ row.suggested_action }}</td>
+        <td class="reason">{{ row.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="empty">No radar alerts recorded yet.</div>
+{% endif %}
+{% endblock %}

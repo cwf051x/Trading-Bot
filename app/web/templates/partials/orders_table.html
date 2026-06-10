@@ -1,0 +1,36 @@
+{% if rows %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Symbol</th>
+        <th>Side</th>
+        <th>Quantity</th>
+        <th>Entry</th>
+        <th>Stop</th>
+        <th>Take Profit</th>
+        <th>Status</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.id }}</td>
+        <td>{{ row.symbol }}</td>
+        <td>{{ row.side }}</td>
+        <td>{{ row.quantity }}</td>
+        <td>{{ row.entry_price }}</td>
+        <td>{{ row.stop_loss }}</td>
+        <td>{{ row.take_profit }}</td>
+        <td>{{ row.status }}</td>
+        <td class="reason">{{ row.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">No orders yet.</div>
+{% endif %}

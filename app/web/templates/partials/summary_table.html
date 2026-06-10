@@ -1,0 +1,31 @@
+{% set summary_rows = summary if summary is defined else snapshot.summary %}
+{% if summary_rows %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Trades</th>
+        <th>Win Rate</th>
+        <th>Profit Factor</th>
+        <th>Max Drawdown</th>
+        <th>Final Equity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in summary_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td>{{ row.trade_count }}</td>
+        <td>{{ row.win_rate }}</td>
+        <td>{{ row.profit_factor }}</td>
+        <td>{{ row.max_drawdown }}</td>
+        <td>{{ row.final_equity }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">No backtest summary found.</div>
+{% endif %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p class="lead">Paper trading operations, strategy configuration, and backtest health in one place.</p>
+  </div>
+  <a class="button secondary" href="/settings">Edit Settings</a>
+</div>
+
+<div class="grid-tight">
+  <div class="stat">
+    <div>
+      <div class="metric">Run Mode</div>
+      <div class="value">{{ settings.run_mode.value }}</div>
+    </div>
+    <div class="meta">Configured runtime mode</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">Live Trading</div>
+      <div class="value {% if settings.live_trading_allowed %}danger{% else %}ok{% endif %}">
+        {% if settings.live_trading_allowed %}Allowed{% else %}Blocked{% endif %}
+      </div>
+    </div>
+    <div class="meta">v1 keeps real orders disabled</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">Account Equity</div>
+      <div class="value">{{ "%.2f"|format(settings.account_equity) }}</div>
+    </div>
+    <div class="meta">Used for risk sizing</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">Symbols</div>
+      <div class="value">{{ settings.active_symbols|length }}</div>
+    </div>
+    <div class="meta">{{ symbols }}</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">Strategy</div>
+      <div class="value">MomentumOI</div>
+    </div>
+    <div class="meta">Breakout {{ settings.strategy_breakout_window }} / Volume {{ settings.strategy_volume_multiplier }}</div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="toolbar">
+    <h2>Backtest Summary</h2>
+    <a class="button secondary" href="/backtests">Run Backtest</a>
+  </div>
+  {% include "partials/summary_table.html" %}
+</div>
+
+<div class="section">
+  <div class="toolbar">
+    <h2>Recent Orders</h2>
+    <a class="button secondary" href="/orders">View All</a>
+  </div>
+  {% set rows = snapshot.orders %}
+  {% include "partials/orders_table.html" %}
+</div>
+
+<div class="section">
+  <div class="toolbar">
+    <h2>Recent Positions</h2>
+    <a class="button secondary" href="/positions">View All</a>
+  </div>
+  {% set rows = snapshot.positions %}
+  {% include "partials/positions_table.html" %}
+</div>
+
+<div class="section">
+  <div class="toolbar">
+    <h2>Recent Trades</h2>
+    <a class="button secondary" href="/trades">View All</a>
+  </div>
+  {% set rows = snapshot.trades %}
+  {% include "partials/trades_table.html" %}
+</div>
+{% endblock %}

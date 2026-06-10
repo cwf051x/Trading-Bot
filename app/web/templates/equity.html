@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Equity Curve</h1>
+    <p class="lead">Inspect exported backtest equity curves. This view reads CSV output and does not place orders.</p>
+  </div>
+  {% if selected %}<span class="badge">{{ selected }}</span>{% endif %}
+</div>
+
+{% if equity_files %}
+<form method="get" action="/equity" class="panel">
+  <div class="toolbar">
+    <label style="min-width: min(560px, 100%);">
+      Equity CSV
+      <select name="file">
+        {% for path in equity_files %}
+          <option value="{{ path.name }}" {% if path.name == selected %}selected{% endif %}>{{ path.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">View Curve</button>
+  </div>
+</form>
+
+{% if curve %}
+<div class="grid-tight section">
+  <div class="stat">
+    <div>
+      <div class="metric">Start Equity</div>
+      <div class="value">{{ "%.4f"|format(curve[0].equity) }}</div>
+    </div>
+    <div class="meta">First exported point</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">End Equity</div>
+      <div class="value">{{ "%.4f"|format(curve[-1].equity) }}</div>
+    </div>
+    <div class="meta">Last exported point</div>
+  </div>
+  <div class="stat">
+    <div>
+      <div class="metric">Points</div>
+      <div class="value">{{ curve|length }}</div>
+    </div>
+    <div class="meta">CSV rows loaded</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="section chart">
+  <svg viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label="Equity curve">
+    <rect x="0" y="0" width="900" height="260" fill="#ffffff"/>
+    <line x1="0" y1="240" x2="900" y2="240" stroke="#dce2ea" stroke-width="1"/>
+    <line x1="0" y1="130" x2="900" y2="130" stroke="#edf1f5" stroke-width="1"/>
+    <line x1="0" y1="20" x2="900" y2="20" stroke="#edf1f5" stroke-width="1"/>
+    {% if svg_points %}
+      <polyline points="{{ svg_points }}" fill="none" stroke="#0f766e" stroke-width="3" vector-effect="non-scaling-stroke"/>
+    {% endif %}
+  </svg>
+</div>
+{% else %}
+<div class="empty">No equity curve CSV found.</div>
+{% endif %}
+{% endblock %}

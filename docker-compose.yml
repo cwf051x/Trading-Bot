@@ -1,0 +1,39 @@
+services:
+  trading-bot:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: "3.11"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./backtests:/app/backtests
+    command: ["python", "-m", "app.main", "--mode", "paper"]
+    restart: unless-stopped
+
+  admin-web:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: "3.11"
+    volumes:
+      - ./.env:/app/.env
+      - ./data:/app/data
+      - ./backtests:/app/backtests
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    command: ["uvicorn", "app.web.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    restart: unless-stopped
+
+  alert-radar:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: "3.11"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: ["python", "scripts/run_alert_radar_loop.py"]
+    restart: unless-stopped

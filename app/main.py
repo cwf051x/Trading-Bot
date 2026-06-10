@@ -1,0 +1,143 @@
+"""Application entry point for backtest, paper, and guarded live modes.
+应用入口，负责回测、模拟盘和受保护 live 模式的调度。
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import time
+from pathlib import Path
+from typing import Any
+
+from app.backtest.engine import BacktestEngine
+from app.config import RunMode, get_settings
+from app.execution.paper import PaperTradingEngine
+from app.exchange.binance import BinanceFuturesClient
+from app.notify.telegram import TelegramNotifier
+from app.risk.manager import RiskManager
+from app.storage.sqlite import SQLiteStorage
+from app.strategies.momentum_oi import MomentumOIStrategy
+
+
+logger = logging.getLogger(__name__)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build CLI parser.
+    构建命令行参数解析器。
+    """
+
+    parser = argparse.ArgumentParser(description="Crypto USDT-M futures trading system")
+    parser.add_argument("--mode", choices=[mode.value for mode in RunMode], help="Override RUN_MODE")
+    parser.add_argument("--csv", type=Path, help="Historical kline CSV path for backtest")
+    parser.add_argument("--equity-curve-csv", type=Path, help="Optional equity curve export path")
+    parser.add_argument("--once", action="store_true", help="Run one paper cycle and exit")
+    return parser
+
+
+def run_paper_cycle(
+    client: BinanceFuturesClient,
+    paper: PaperTradingEngine,
+    strategy: MomentumOIStrategy,
+    risk_manager: RiskManager,
+    notifier: TelegramNotifier,
+    settings: Any,
+) -> None:
+    """Run one paper trading market-data and signal cycle for watched symbols.
+    对所有监控交易对执行一轮模拟盘行情、信号、风控和模拟执行流程。
+    """
+
+    watch_symbols = list(getattr(settings, "active_symbols", [settings.default_symbol]))
+    btc_klines = client.get_klines("BTC/USDT:USDT", "15m", limit=2)
+    current_prices: dict[str, float] = {}
+    for symbol in watch_symbols:
+        klines = client.get_klines(symbol, settings.default_timeframe, limit=settings.kline_limit)
+        if klines:
+            current_prices[symbol] = klines[-1].close
+            paper.update_open_positions(symbol, klines[-1].close, klines[-1].timestamp)
+        signal = strategy.generate_signal({"symbol": symbol, "klines": klines, "btc_klines": btc_klines})
+        if signal.is_actionable:
+            notifier.notify_signal(signal)
+        else:
+            logger.info("Signal %s %s: %s", signal.symbol, signal.side, signal.reason)
+        decision = risk_manager.evaluate(signal=signal, market_context={"btc_klines": btc_klines})
+        if decision.allowed:
+            paper.process_signal(signal, quantity=decision.position_size)
+        elif signal.is_actionable:
+            notifier.notify_risk_block(signal, decision.reason)
+        else:
+            logger.info("Risk ignored non-actionable signal %s: %s", signal.symbol, decision.reason)
+
+    snapshot = paper.get_account_snapshot(current_prices)
+    logger.info(
+        "Paper account equity=%.2f available=%.2f used_margin=%.2f realized_pnl=%.2f unrealized_pnl=%.2f open_positions=%s",
+        snapshot.equity,
+        snapshot.available_balance,
+        snapshot.used_margin,
+        snapshot.realized_pnl,
+        snapshot.unrealized_pnl,
+        snapshot.open_position_count,
+    )
+
+
+def run() -> None:
+    """Run the configured application mode.
+    按配置或命令行参数运行指定模式。
+    """
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    args = build_parser().parse_args()
+    settings = get_settings()
+    mode = RunMode(args.mode) if args.mode else settings.run_mode
+
+    storage = SQLiteStorage(settings.database_path)
+    storage.initialize()
+    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, proxy=settings.telegram_proxy or settings.exchange_proxy)
+    notifier.notify_startup(mode.value)
+
+    strategy = MomentumOIStrategy(
+        breakout_window=settings.strategy_breakout_window,
+        volume_window=settings.strategy_volume_window,
+        volume_multiplier=settings.strategy_volume_multiplier,
+        btc_drop_threshold=settings.btc_drop_threshold_15m,
+        stop_loss_pct=settings.strategy_stop_loss_pct,
+        take_profit_pct=settings.strategy_take_profit_pct,
+    )
+    risk_manager = RiskManager(
+        account_equity=settings.account_equity,
+        btc_drop_threshold_15m=settings.btc_drop_threshold_15m,
+    )
+
+    if mode == RunMode.BACKTEST:
+        if not args.csv:
+            raise SystemExit("--csv is required when running backtest mode")
+        engine = BacktestEngine(strategy=strategy, initial_equity=settings.account_equity)
+        result = engine.run_csv(args.csv)
+        if args.equity_curve_csv:
+            result.export_equity_curve(args.equity_curve_csv)
+        logger.info("Backtest metrics: %s", result.metrics)
+        return
+
+    if mode == RunMode.PAPER:
+        client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy)
+        paper = PaperTradingEngine(storage=storage, notifier=notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+        while True:
+            try:
+                run_paper_cycle(client, paper, strategy, risk_manager, notifier, settings)
+            except KeyboardInterrupt:
+                logger.info("Paper mode stopped by user")
+                return
+            except Exception as exc:
+                logger.exception("Paper cycle failed: %s", exc)
+                notifier.notify_error(f"Paper cycle failed: {exc}")
+            if args.once:
+                return
+            time.sleep(settings.poll_interval_seconds)
+
+    logger.warning("Live mode is not implemented. Real orders are blocked in v1.")
+    raise SystemExit("live mode is reserved and real trading is disabled in this version")
+
+
+if __name__ == "__main__":
+    run()

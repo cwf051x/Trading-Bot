@@ -1,0 +1,9 @@
+[project]
+name = "trading-bot"
+version = "0.1.0"
+description = "Python crypto USDT-M futures trading system skeleton."
+requires-python = ">=3.11,<3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
