@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Orders</h1>
+<div class="page-head">
+  <div>
+    <h1>Orders</h1>
+    <p class="lead">Latest simulated order intents recorded by the paper trading engine.</p>
+  </div>
+  <span class="badge">Paper Records</span>
+</div>
 {% include "partials/orders_table.html" %}
 {% endblock %}

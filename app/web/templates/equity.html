@@ -19,7 +19,10 @@
         {% endfor %}
       </select>
     </label>
-    <button type="submit">View Curve</button>
+    <button type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 14 3-3 3 2 5-6"></path></svg>
+      View Curve
+    </button>
   </div>
 </form>
 
@@ -51,12 +54,12 @@
 
 <div class="section chart">
   <svg viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label="Equity curve">
-    <rect x="0" y="0" width="900" height="260" fill="#ffffff"/>
-    <line x1="0" y1="240" x2="900" y2="240" stroke="#dce2ea" stroke-width="1"/>
-    <line x1="0" y1="130" x2="900" y2="130" stroke="#edf1f5" stroke-width="1"/>
-    <line x1="0" y1="20" x2="900" y2="20" stroke="#edf1f5" stroke-width="1"/>
+    <rect x="0" y="0" width="900" height="260" fill="#101318"/>
+    <line x1="0" y1="240" x2="900" y2="240" stroke="#2B313B" stroke-width="1"/>
+    <line x1="0" y1="130" x2="900" y2="130" stroke="#2B313B" stroke-width="1" opacity="0.7"/>
+    <line x1="0" y1="20" x2="900" y2="20" stroke="#2B313B" stroke-width="1" opacity="0.7"/>
     {% if svg_points %}
-      <polyline points="{{ svg_points }}" fill="none" stroke="#0f766e" stroke-width="3" vector-effect="non-scaling-stroke"/>
+      <polyline points="{{ svg_points }}" fill="none" stroke="#20C997" stroke-width="3" vector-effect="non-scaling-stroke"/>
     {% endif %}
   </svg>
 </div>

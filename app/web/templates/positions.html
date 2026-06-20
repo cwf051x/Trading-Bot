@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Positions</h1>
+<div class="page-head">
+  <div>
+    <h1>Positions</h1>
+    <p class="lead">Open and closed simulated positions with exits, stops, take-profit, and PnL fields.</p>
+  </div>
+  <span class="badge">SQLite Ledger</span>
+</div>
 {% include "partials/positions_table.html" %}
 {% endblock %}

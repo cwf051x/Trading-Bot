@@ -12,10 +12,16 @@
       WEB_ADMIN_TOKEN
       <input name="token" type="password" autocomplete="current-password" required>
     </label>
-    <button type="submit">Login</button>
+    <button type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><path d="m10 17 5-5-5-5"></path><path d="M15 12H3"></path></svg>
+      Login
+    </button>
   </form>
 {% else %}
   <div class="notice">WEB_ADMIN_TOKEN is not set. Authentication is currently disabled.</div>
-  <a class="button" href="/">Open Dashboard</a>
+  <a class="button" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+    Open Dashboard
+  </a>
 {% endif %}
 {% endblock %}

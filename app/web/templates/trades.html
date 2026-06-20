@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Trades</h1>
+<div class="page-head">
+  <div>
+    <h1>Trades</h1>
+    <p class="lead">Completed paper trades and realized exit reasons for strategy review.</p>
+  </div>
+  <span class="badge">Closed Trades</span>
+</div>
 {% include "partials/trades_table.html" %}
 {% endblock %}
