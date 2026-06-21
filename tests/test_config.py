@@ -65,6 +65,13 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_SECOND_LEG_MIN_CLOSE_POSITION",
         "ALERT_PULLBACK_VOLUME_CONTRACTION_MAX",
         "ALERT_OVERHEAT_RSI",
+        "ALERT_CANDIDATE_TOP_N",
+        "ALERT_OI_TOP_N",
+        "ALERT_KLINE_FAST_TTL_SECONDS",
+        "ALERT_KLINE_MEDIUM_TTL_SECONDS",
+        "ALERT_KLINE_SLOW_TTL_SECONDS",
+        "ALERT_OI_TTL_SECONDS",
+        "ALERT_HOT_SYMBOL_TTL_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
@@ -99,6 +106,13 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_second_leg_min_close_position == 0.55
     assert settings.alert_pullback_volume_contraction_max == 1.0
     assert settings.alert_overheat_rsi == 82.0
+    assert settings.alert_candidate_top_n == 50
+    assert settings.alert_oi_top_n == 30
+    assert settings.alert_kline_fast_ttl_seconds == 0
+    assert settings.alert_kline_medium_ttl_seconds == 180
+    assert settings.alert_kline_slow_ttl_seconds == 600
+    assert settings.alert_oi_ttl_seconds == 60
+    assert settings.alert_hot_symbol_ttl_seconds == 900
     assert settings.live_trading_allowed is False
 
 

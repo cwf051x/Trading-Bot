@@ -10,6 +10,7 @@ from typing import Any
 
 from app.alerts.alert_rules import AlertRuleEngine
 from app.alerts.alert_state import AlertStateManager
+from app.alerts.profiling import CycleProfiler
 from app.alerts.scanner import MarketScanner
 from app.alerts.scoring import level_from_score
 from app.alerts.signal_models import AlertLevel, AlertSignal, AlertType, MarketMetrics
@@ -70,52 +71,74 @@ class MarketAlertRadar:
         执行一轮扫描、保存提醒，并按配置发送通知。
         """
 
-        self.storage.initialize()
-        if not self.settings.alert_radar_enabled:
-            logger.info("Alert radar disabled by ALERT_RADAR_ENABLED=false")
-            return []
-        try:
-            metrics_rows = self.scanner.scan()
-        except Exception as exc:
-            logger.exception("Alert radar scan failed: %s", exc)
-            self._notify_error_throttled(f"Alert radar scan failed: {exc}")
-            return []
-        cycle_candidates: list[AlertSignal] = []
-        for metrics in metrics_rows:
-            if self.paper:
-                self.paper.update_open_positions(metrics.symbol, metrics.price, int(time.time() * 1000))
-            state = self.state.get_state(metrics.symbol)
-            symbol_alerts: list[AlertSignal] = []
-            for result in self.rules.evaluate(metrics, state):
-                alert = self._build_alert(metrics, result.alert_type, result.score, result.reasons, result.suggested_action, result.invalidation_price, result.target_1, result.target_2, result.metadata)
-                if alert.level == AlertLevel.IGNORE:
-                    continue
-                if alert.score < self.settings.alert_min_score_to_store:
-                    logger.info("Alert %s %s ignored because score %s is below store threshold", alert.symbol, alert.alert_type.value, alert.score)
-                    continue
-                symbol_alerts.append(alert)
-            symbol_winner = self._select_symbol_winner(symbol_alerts)
-            if symbol_winner:
-                cycle_candidates.append(symbol_winner)
+        cycle_started_at = time.perf_counter()
+        profiler = CycleProfiler()
         alerts: list[AlertSignal] = []
-        for alert in self._select_cycle_alerts(cycle_candidates):
-            if not self.state.should_record(alert):
-                logger.info("Alert %s %s skipped because storage cooldown blocked it", alert.symbol, alert.alert_type.value)
-                continue
-            should_send = self.state.should_send(alert)
-            sent_to_telegram = False
-            if should_send:
-                sent_to_telegram = self.notifier.send_message(format_alert_message(alert))
-            persisted_alert = AlertSignal(**{**alert.__dict__, "sent_to_telegram": sent_to_telegram})
-            self.state.record_alert(persisted_alert, sent_to_telegram=sent_to_telegram)
-            self._process_auto_paper_order(persisted_alert)
-            notifier_enabled = bool(getattr(self.notifier, "enabled", False))
-            if should_send and not sent_to_telegram and notifier_enabled:
-                logger.warning("Alert %s %s qualified for Telegram but send failed", alert.symbol, alert.alert_type.value)
-            elif not should_send:
-                logger.info("Alert %s %s stored without Telegram because level config or cooldown blocked it", alert.symbol, alert.alert_type.value)
-            alerts.append(persisted_alert)
-        return sorted(alerts, key=lambda item: item.score, reverse=True)
+        with profiler.measure("storage_initialize"):
+            self.storage.initialize()
+        try:
+            if not self.settings.alert_radar_enabled:
+                logger.info("Alert radar disabled by ALERT_RADAR_ENABLED=false")
+                return []
+            metrics_rows = self.scanner.scan()
+            scanner_profile = getattr(self.scanner, "last_profile", None)
+            if scanner_profile is not None:
+                profiler.merge(scanner_profile)
+            profiler.set_meta(metrics=len(metrics_rows))
+            cycle_candidates: list[AlertSignal] = []
+            with profiler.measure("calculate_signals"):
+                for metrics in metrics_rows:
+                    if self.paper:
+                        with profiler.measure("paper_mark_to_market"):
+                            self.paper.update_open_positions(metrics.symbol, metrics.price, int(time.time() * 1000))
+                    state = self.state.get_state(metrics.symbol)
+                    symbol_alerts: list[AlertSignal] = []
+                    for result in self.rules.evaluate(metrics, state):
+                        alert = self._build_alert(metrics, result.alert_type, result.score, result.reasons, result.suggested_action, result.invalidation_price, result.target_1, result.target_2, result.metadata)
+                        if alert.level == AlertLevel.IGNORE:
+                            continue
+                        if alert.score < self.settings.alert_min_score_to_store:
+                            logger.info("Alert %s %s ignored because score %s is below store threshold", alert.symbol, alert.alert_type.value, alert.score)
+                            continue
+                        symbol_alerts.append(alert)
+                    symbol_winner = self._select_symbol_winner(symbol_alerts)
+                    if symbol_winner:
+                        cycle_candidates.append(symbol_winner)
+            for alert in self._select_cycle_alerts(cycle_candidates):
+                with profiler.measure("cooldown_check"):
+                    should_record = self.state.should_record(alert)
+                if not should_record:
+                    logger.info("Alert %s %s skipped because storage cooldown blocked it", alert.symbol, alert.alert_type.value)
+                    continue
+                with profiler.measure("cooldown_check"):
+                    should_send = self.state.should_send(alert)
+                sent_to_telegram = False
+                if should_send:
+                    with profiler.measure("notify"):
+                        sent_to_telegram = self.notifier.send_message(format_alert_message(alert))
+                persisted_alert = AlertSignal(**{**alert.__dict__, "sent_to_telegram": sent_to_telegram})
+                with profiler.measure("store_alerts"):
+                    self.state.record_alert(persisted_alert, sent_to_telegram=sent_to_telegram)
+                with profiler.measure("auto_paper"):
+                    self._process_auto_paper_order(persisted_alert)
+                notifier_enabled = bool(getattr(self.notifier, "enabled", False))
+                if should_send and not sent_to_telegram and notifier_enabled:
+                    logger.warning("Alert %s %s qualified for Telegram but send failed", alert.symbol, alert.alert_type.value)
+                elif not should_send:
+                    logger.info("Alert %s %s stored without Telegram because level config or cooldown blocked it", alert.symbol, alert.alert_type.value)
+                alerts.append(persisted_alert)
+            return sorted(alerts, key=lambda item: item.score, reverse=True)
+        except Exception as exc:
+            if "metrics_rows" not in locals():
+                scanner_profile = getattr(self.scanner, "last_profile", None)
+                if scanner_profile is not None:
+                    profiler.merge(scanner_profile)
+            logger.exception("Alert radar cycle failed: %s", exc)
+            self._notify_error_throttled(f"Alert radar cycle failed: {exc}")
+            return []
+        finally:
+            profiler.set_meta(alerts=len(alerts))
+            profiler.log(logger, total_seconds=time.perf_counter() - cycle_started_at)
 
     def _process_auto_paper_order(self, alert: AlertSignal) -> None:
         """Create a simulated order for actionable alert entries.

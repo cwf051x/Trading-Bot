@@ -36,7 +36,7 @@ def main() -> None:
     notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, proxy=settings.telegram_proxy or settings.exchange_proxy)
     paper = PaperTradingEngine(storage=storage, notifier=notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
     risk_manager = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
-    radar = MarketAlertRadar(MarketScanner(client, settings), storage, notifier, settings, paper=paper, risk_manager=risk_manager)
+    radar = MarketAlertRadar(MarketScanner(client, settings, storage=storage), storage, notifier, settings, paper=paper, risk_manager=risk_manager)
     while True:
         try:
             alerts = radar.run_once()

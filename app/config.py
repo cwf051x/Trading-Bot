@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     alert_second_leg_min_close_position: float = Field(default=0.55, alias="ALERT_SECOND_LEG_MIN_CLOSE_POSITION")
     alert_pullback_volume_contraction_max: float = Field(default=1.0, alias="ALERT_PULLBACK_VOLUME_CONTRACTION_MAX")
     alert_overheat_rsi: float = Field(default=82.0, alias="ALERT_OVERHEAT_RSI")
+    alert_candidate_top_n: int = Field(default=50, alias="ALERT_CANDIDATE_TOP_N")
+    alert_oi_top_n: int = Field(default=30, alias="ALERT_OI_TOP_N")
+    alert_kline_fast_ttl_seconds: int = Field(default=0, alias="ALERT_KLINE_FAST_TTL_SECONDS")
+    alert_kline_medium_ttl_seconds: int = Field(default=180, alias="ALERT_KLINE_MEDIUM_TTL_SECONDS")
+    alert_kline_slow_ttl_seconds: int = Field(default=600, alias="ALERT_KLINE_SLOW_TTL_SECONDS")
+    alert_oi_ttl_seconds: int = Field(default=60, alias="ALERT_OI_TTL_SECONDS")
+    alert_hot_symbol_ttl_seconds: int = Field(default=900, alias="ALERT_HOT_SYMBOL_TTL_SECONDS")
 
     @field_validator("watch_symbols", mode="before")
     @classmethod
