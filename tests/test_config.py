@@ -74,6 +74,17 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_HOT_SYMBOL_TTL_SECONDS",
         "ALERT_FETCH_CONCURRENCY",
         "ALERT_FETCH_MIN_INTERVAL_SECONDS",
+        "ALERT_INCREMENTAL_KLINES_ENABLED",
+        "ALERT_INCREMENTAL_KLINE_TAIL_LIMIT",
+        "ALERT_FULL_KLINE_REFRESH_SECONDS",
+        "ALERT_KLINE_CACHE_MAX_LENGTH",
+        "ALERT_RATE_LIMIT_BACKOFF_SECONDS",
+        "ALERT_RATE_LIMIT_BACKOFF_CONCURRENCY",
+        "ALERT_RATE_LIMIT_BACKOFF_MIN_INTERVAL_SECONDS",
+        "ALERT_OI_HOT_TTL_SECONDS",
+        "ALERT_OI_WARM_TTL_SECONDS",
+        "ALERT_OI_COLD_TTL_SECONDS",
+        "ALERT_OI_MAX_REFRESH_PER_LOOP",
     ):
         monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
@@ -117,6 +128,17 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_hot_symbol_ttl_seconds == 900
     assert settings.alert_fetch_concurrency == 6
     assert settings.alert_fetch_min_interval_seconds == 0.15
+    assert settings.alert_incremental_klines_enabled is True
+    assert settings.alert_incremental_kline_tail_limit == 3
+    assert settings.alert_full_kline_refresh_seconds == 1800
+    assert settings.alert_kline_cache_max_length == 200
+    assert settings.alert_rate_limit_backoff_seconds == 120
+    assert settings.alert_rate_limit_backoff_concurrency == 2
+    assert settings.alert_rate_limit_backoff_min_interval_seconds == 0.5
+    assert settings.alert_oi_hot_ttl_seconds == 30
+    assert settings.alert_oi_warm_ttl_seconds == 90
+    assert settings.alert_oi_cold_ttl_seconds == 600
+    assert settings.alert_oi_max_refresh_per_loop == 15
     assert settings.live_trading_allowed is False
 
 

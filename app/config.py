@@ -92,6 +92,17 @@ class Settings(BaseSettings):
     alert_hot_symbol_ttl_seconds: int = Field(default=900, alias="ALERT_HOT_SYMBOL_TTL_SECONDS")
     alert_fetch_concurrency: int = Field(default=6, alias="ALERT_FETCH_CONCURRENCY")
     alert_fetch_min_interval_seconds: float = Field(default=0.15, alias="ALERT_FETCH_MIN_INTERVAL_SECONDS")
+    alert_incremental_klines_enabled: bool = Field(default=True, alias="ALERT_INCREMENTAL_KLINES_ENABLED")
+    alert_incremental_kline_tail_limit: int = Field(default=3, alias="ALERT_INCREMENTAL_KLINE_TAIL_LIMIT")
+    alert_full_kline_refresh_seconds: int = Field(default=1800, alias="ALERT_FULL_KLINE_REFRESH_SECONDS")
+    alert_kline_cache_max_length: int = Field(default=200, alias="ALERT_KLINE_CACHE_MAX_LENGTH")
+    alert_rate_limit_backoff_seconds: int = Field(default=120, alias="ALERT_RATE_LIMIT_BACKOFF_SECONDS")
+    alert_rate_limit_backoff_concurrency: int = Field(default=2, alias="ALERT_RATE_LIMIT_BACKOFF_CONCURRENCY")
+    alert_rate_limit_backoff_min_interval_seconds: float = Field(default=0.5, alias="ALERT_RATE_LIMIT_BACKOFF_MIN_INTERVAL_SECONDS")
+    alert_oi_hot_ttl_seconds: int = Field(default=30, alias="ALERT_OI_HOT_TTL_SECONDS")
+    alert_oi_warm_ttl_seconds: int = Field(default=90, alias="ALERT_OI_WARM_TTL_SECONDS")
+    alert_oi_cold_ttl_seconds: int = Field(default=600, alias="ALERT_OI_COLD_TTL_SECONDS")
+    alert_oi_max_refresh_per_loop: int = Field(default=15, alias="ALERT_OI_MAX_REFRESH_PER_LOOP")
 
     @field_validator("watch_symbols", mode="before")
     @classmethod

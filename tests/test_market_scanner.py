@@ -42,6 +42,7 @@ def make_kline(index: int, close: float = 1.0, volume: float = 100.0) -> Kline:
 class CountingMarketClient:
     def __init__(self, ticker_count: int = 20) -> None:
         self.klines_calls: Counter[tuple[str, str]] = Counter()
+        self.kline_limits: list[tuple[str, str, int]] = []
         self.oi_calls: Counter[str] = Counter()
         self.tickers = [
             {
@@ -61,6 +62,7 @@ class CountingMarketClient:
 
     def get_klines(self, symbol: str, timeframe: str, limit: int):
         self.klines_calls[(symbol, timeframe)] += 1
+        self.kline_limits.append((symbol, timeframe, limit))
         close = 1.0
         if "COIN" in symbol:
             close = 1.0 + int(symbol.split("COIN", 1)[1].split("/", 1)[0]) / 100
@@ -113,6 +115,41 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
     assert scanner.last_profile.meta["skipped_by_ttl"] >= 8
 
 
+def test_scanner_limits_oi_refreshes_per_loop() -> None:
+    client = CountingMarketClient(ticker_count=8)
+    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=6, ALERT_OI_MAX_REFRESH_PER_LOOP=2)
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+
+    assert sum(client.oi_calls.values()) == 2
+    assert scanner.last_profile.meta["strong_candidate_symbols_count"] == 6
+    assert scanner.last_profile.meta["oi_refresh_needed_count"] == 6
+    assert scanner.last_profile.meta["oi_refresh_skipped_by_limit"] == 4
+
+
+def test_scanner_does_not_refetch_tiered_oi_cache_when_ttl_is_valid() -> None:
+    client = CountingMarketClient(ticker_count=8)
+    settings = Settings(
+        _env_file=None,
+        ALERT_CANDIDATE_TOP_N=6,
+        ALERT_OI_TOP_N=6,
+        ALERT_OI_MAX_REFRESH_PER_LOOP=2,
+        ALERT_OI_HOT_TTL_SECONDS=300,
+        ALERT_OI_WARM_TTL_SECONDS=300,
+        ALERT_OI_COLD_TTL_SECONDS=300,
+    )
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+    scanner.scan()
+
+    assert sum(client.oi_calls.values()) == 4
+    assert max(client.oi_calls.values()) == 1
+    assert scanner.last_profile.meta["oi_cache_hits"] == 2
+    assert scanner.last_profile.meta["oi_skipped_by_ttl"] == 2
+
+
 class SlowCountingMarketClient(CountingMarketClient):
     def __init__(self, ticker_count: int = 8, delay_seconds: float = 0.02) -> None:
         super().__init__(ticker_count=ticker_count)
@@ -154,7 +191,7 @@ def test_scanner_fetches_market_data_with_bounded_concurrency() -> None:
 
 def test_scanner_throttles_fetch_start_rate(monkeypatch) -> None:
     scanner = MarketScanner(CountingMarketClient(), Settings(_env_file=None, ALERT_FETCH_MIN_INTERVAL_SECONDS=0.5))
-    times = iter([10.0, 10.1, 10.6])
+    times = iter([10.0, 10.1, 10.2, 10.3, 10.6])
     sleeps: list[float] = []
 
     monkeypatch.setattr("app.alerts.scanner.time.time", lambda: next(times))
@@ -163,4 +200,92 @@ def test_scanner_throttles_fetch_start_rate(monkeypatch) -> None:
     scanner._throttle_fetch()
     scanner._throttle_fetch()
 
-    assert sleeps == pytest.approx([0.4])
+    assert sleeps == pytest.approx([0.3])
+
+
+class TailRefreshClient:
+    def __init__(self) -> None:
+        self.limits: list[int] = []
+
+    def get_klines(self, symbol: str, timeframe: str, limit: int):
+        self.limits.append(limit)
+        if len(self.limits) == 1:
+            return [make_kline(index, close=1 + index / 100) for index in range(limit)]
+        return [make_kline(index, close=2 + index / 100) for index in (58, 59, 60)][-limit:]
+
+
+def test_scanner_incrementally_merges_warm_kline_cache_without_duplicates() -> None:
+    client = TailRefreshClient()
+    settings = Settings(_env_file=None, ALERT_INCREMENTAL_KLINES_ENABLED=True, ALERT_INCREMENTAL_KLINE_TAIL_LIMIT=3, ALERT_KLINE_CACHE_MAX_LENGTH=60)
+    scanner = MarketScanner(client, settings)
+
+    scanner._get_klines_cached("BTC/USDT:USDT", "5m", 60, ttl_seconds=0)
+    merged = scanner._get_klines_cached("BTC/USDT:USDT", "5m", 60, ttl_seconds=0)
+
+    timestamps = [item.timestamp for item in merged]
+    assert client.limits == [60, 3]
+    assert timestamps == sorted(set(timestamps))
+    assert len(merged) == 60
+    assert timestamps[0] == make_kline(1).timestamp
+    assert timestamps[-1] == make_kline(60).timestamp
+    assert scanner.candle_cache[("BTC/USDT:USDT", "5m")]["data"] == merged
+    assert scanner._cache_stats["kline_incremental_refresh_count"] == 1
+    assert scanner._cache_stats["kline_incremental_merge_count"] == 1
+
+
+def test_scanner_uses_full_refresh_when_kline_cache_has_large_time_gap() -> None:
+    client = TailRefreshClient()
+    settings = Settings(_env_file=None, ALERT_INCREMENTAL_KLINES_ENABLED=True, ALERT_INCREMENTAL_KLINE_TAIL_LIMIT=3, ALERT_KLINE_CACHE_MAX_LENGTH=60)
+    scanner = MarketScanner(client, settings)
+    scanner.candle_cache[("BTC/USDT:USDT", "1m")] = {
+        "data": [make_kline(0), make_kline(1), make_kline(10)],
+        "updated_at": time.time(),
+        "full_refresh_at": time.time(),
+    }
+
+    refreshed = scanner._get_klines_cached("BTC/USDT:USDT", "1m", 60, ttl_seconds=0)
+
+    assert client.limits == [60]
+    assert len(refreshed) == 60
+    assert scanner._cache_stats["kline_cache_invalid_count"] == 1
+    assert scanner._cache_stats["kline_full_refresh_count"] == 1
+
+
+class RateLimitedClient:
+    def get_klines(self, symbol: str, timeframe: str, limit: int):
+        raise RuntimeError("binance -1003 Too Many Requests")
+
+
+def test_scanner_enters_rate_limit_backoff_after_429(monkeypatch) -> None:
+    settings = Settings(
+        _env_file=None,
+        ALERT_FETCH_CONCURRENCY=6,
+        ALERT_RATE_LIMIT_BACKOFF_CONCURRENCY=2,
+        ALERT_FETCH_MIN_INTERVAL_SECONDS=0.15,
+        ALERT_RATE_LIMIT_BACKOFF_MIN_INTERVAL_SECONDS=0.5,
+        ALERT_RATE_LIMIT_BACKOFF_SECONDS=120,
+    )
+    scanner = MarketScanner(RateLimitedClient(), settings)
+    monkeypatch.setattr("app.alerts.scanner.time.time", lambda: 1000.0)
+
+    assert scanner._get_klines_safe("BTC/USDT:USDT", "5m", 3) == []
+
+    assert scanner._fetch_concurrency() == 2
+    assert scanner._rate_limit_backoff_remaining() == pytest.approx(120.0)
+    assert scanner._cache_stats["rate_limited_count"] == 1
+
+
+def test_scanner_uses_backoff_request_spacing(monkeypatch) -> None:
+    settings = Settings(_env_file=None, ALERT_FETCH_MIN_INTERVAL_SECONDS=0.15, ALERT_RATE_LIMIT_BACKOFF_MIN_INTERVAL_SECONDS=0.5)
+    scanner = MarketScanner(CountingMarketClient(), settings)
+    scanner._rate_limit_backoff_until = 20.0
+    times = iter([10.0, 10.1, 10.2, 10.3, 10.6])
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("app.alerts.scanner.time.time", lambda: next(times))
+    monkeypatch.setattr("app.alerts.scanner.time.sleep", sleeps.append)
+
+    scanner._throttle_fetch()
+    scanner._throttle_fetch()
+
+    assert sleeps == pytest.approx([0.3])
