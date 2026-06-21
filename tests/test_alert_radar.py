@@ -106,7 +106,7 @@ class EntryRules:
 
 
 def test_radar_creates_paper_order_for_actionable_alert(tmp_path) -> None:
-    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True)
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000)
     storage = SQLiteStorage(tmp_path / "radar.sqlite")
     paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
     risk = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)

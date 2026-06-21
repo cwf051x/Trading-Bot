@@ -19,6 +19,7 @@ from app.data.symbol_universe import symbol_base
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.momentum_oi import MomentumOIStrategy
 from app.web.env_editor import update_env_values
+from app.web.work_logs import load_work_log_view
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -310,6 +311,27 @@ def create_app() -> FastAPI:
                 title="Market Alerts",
             ),
         )
+
+    @app.get("/logs")
+    def logs_page(request: Request, _: None = Depends(require_admin)) -> Response:
+        """Render local operation logs for radar and paper-trading diagnostics.
+        渲染本地运行日志，辅助排查雷达和模拟盘问题。
+        """
+
+        settings = Settings()
+        limit_text = request.query_params.get("limit", "200")
+        try:
+            limit = int(limit_text)
+        except ValueError:
+            limit = 200
+        view = load_work_log_view(
+            BASE_DIR,
+            source=request.query_params.get("source", "all"),
+            level=request.query_params.get("level", "all"),
+            query=request.query_params.get("q", ""),
+            limit=limit,
+        )
+        return templates.TemplateResponse(request, "logs.html", base_context(request, settings, title="Work Logs", **view))
 
     @app.get("/positions")
     def positions_page(request: Request, _: None = Depends(require_admin)) -> Response:

@@ -130,6 +130,27 @@ def test_alerts_page_defaults_to_volume_price_oi_resonance(monkeypatch, tmp_path
     assert "OLD" in all_response.text
 
 
+def test_logs_page_renders_local_work_log(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "alert_radar.log").write_text(
+        "2026-06-21 17:59:31,264 INFO root Alert radar cycle finished with 0 alerts\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_server, "BASE_DIR", tmp_path)
+    client = TestClient(create_app())
+
+    response = client.get("/logs")
+
+    assert response.status_code == 200
+    assert "Work Logs" in response.text
+    assert "Radar Loop" in response.text
+    assert "Alert radar cycle finished with 0 alerts" in response.text
+    assert 'href="/logs"' in response.text
+
+
 def test_alert_display_helpers_use_compact_chinese_text() -> None:
     assert web_server.display_symbol_base("BTC/USDT:USDT") == "BTC"
     assert web_server.display_symbol_base("ETHUSDT") == "ETH"

@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .log-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 12px;
+  }
+  .log-toolbar {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.3fr) repeat(3, minmax(120px, 0.45fr)) auto;
+    gap: 8px;
+    align-items: end;
+    margin-bottom: 12px;
+  }
+  .log-table {
+    table-layout: fixed;
+  }
+  .log-table th,
+  .log-table td {
+    white-space: normal;
+  }
+  .log-time { width: 138px; color: var(--muted); font-size: 12px; }
+  .log-source { width: 112px; }
+  .log-level { width: 76px; }
+  .log-status { width: 90px; }
+  .log-message {
+    min-width: 0;
+    color: #CBD5E1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .log-detail {
+    align-self: start;
+    position: sticky;
+    top: 82px;
+  }
+  .log-detail h2 {
+    margin-top: 0;
+  }
+  .log-kv {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 12px;
+  }
+  .log-kv span:first-child {
+    color: var(--muted);
+  }
+  .log-raw {
+    max-height: 320px;
+    overflow: auto;
+    margin: 12px 0 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--ink);
+    color: #CBD5E1;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 1080px) {
+    .log-layout {
+      grid-template-columns: 1fr;
+    }
+    .log-detail {
+      position: static;
+    }
+  }
+  @media (max-width: 760px) {
+    .log-toolbar {
+      grid-template-columns: 1fr 1fr;
+    }
+    .log-toolbar .button {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>Work Logs</h1>
+    <p class="lead">Radar loop, paper cycle, Telegram delivery, exchange request failures, and system diagnostics in one read-only view.</p>
+    <p class="meta">Reading: {{ log_files | join(', ') if log_files else 'logs/*.log not found yet' }}</p>
+  </div>
+  <div class="topbar-status">
+    <a class="button secondary" href="/logs">Reset</a>
+    <a class="button" href="/logs?source={{ filters.source }}&level={{ filters.level }}&q={{ filters.q }}&limit={{ filters.limit }}">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg>
+      Refresh
+    </a>
+  </div>
+</div>
+
+<div class="grid-tight">
+  {% for card in cards %}
+    <div class="stat">
+      <div class="label">{{ card.title }}</div>
+      <div class="value {% if card.tone == 'ok' %}ok{% elif card.tone == 'bad' %}danger{% elif card.tone == 'warn' %}warn{% endif %}">{{ card.value }}</div>
+      <div class="meta">{{ card.detail }}</div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="section log-layout">
+  <section class="panel">
+    <form class="log-toolbar" method="get" action="/logs">
+      <label>
+        Search
+        <input name="q" value="{{ filters.q }}" placeholder="symbol / error / telegram / binance">
+      </label>
+      <label>
+        Source
+        <select name="source">
+          {% for item, label in [('all', '全部来源'), ('radar_loop', 'radar_loop'), ('paper_cycle', 'paper_cycle'), ('telegram', 'telegram'), ('paper_order', 'paper_order'), ('exchange', 'exchange'), ('system', 'system')] %}
+            <option value="{{ item }}" {% if filters.source == item %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Level
+        <select name="level">
+          {% for item, label in [('all', '全部级别'), ('INFO', 'INFO'), ('WARN', 'WARN+ERROR'), ('ERROR', 'ERROR')] %}
+            <option value="{{ item }}" {% if filters.level == item %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        Limit
+        <select name="limit">
+          {% for item in [100, 200, 500, 1000] %}
+            <option value="{{ item }}" {% if filters.limit == item %}selected{% endif %}>最近 {{ item }} 行</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        Apply
+      </button>
+    </form>
+
+    {% if entries %}
+      <div class="table-wrap fit-table">
+        <table class="log-table">
+          <colgroup>
+            <col class="log-time">
+            <col class="log-source">
+            <col class="log-level">
+            <col class="log-status">
+            <col>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Source</th>
+              <th>Level</th>
+              <th>Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in entries %}
+              <tr>
+                <td class="log-time">{{ entry.timestamp }}</td>
+                <td class="log-source">{{ entry.source }}</td>
+                <td>
+                  <span class="badge {% if entry.level in ['ERROR', 'CRITICAL'] %}danger{% elif entry.level in ['WARNING', 'WARN'] %}warn{% else %}ok{% endif %}">{{ entry.level }}</span>
+                </td>
+                <td class="log-status">{{ entry.status }}</td>
+                <td class="log-message" title="{{ entry.message }}">{{ entry.message }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty">No matching logs. Try resetting filters or wait for the next radar loop cycle.</div>
+    {% endif %}
+  </section>
+
+  <aside class="panel log-detail">
+    <h2>Latest Detail</h2>
+    {% if selected %}
+      <div class="log-kv"><span>Time</span><strong>{{ selected.timestamp }}</strong></div>
+      <div class="log-kv"><span>Source</span><strong>{{ selected.source }}</strong></div>
+      <div class="log-kv"><span>Level</span><strong class="{% if selected.level in ['ERROR', 'CRITICAL'] %}danger{% elif selected.level in ['WARNING', 'WARN'] %}warn{% else %}ok{% endif %}">{{ selected.level }}</strong></div>
+      <div class="log-kv"><span>Status</span><strong>{{ selected.status }}</strong></div>
+      <div class="log-kv"><span>Logger</span><strong>{{ selected.logger }}</strong></div>
+      <pre class="log-raw">{{ selected.raw }}</pre>
+    {% else %}
+      <p class="lead">No log row selected because the current filter has no result.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

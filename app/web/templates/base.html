@@ -277,6 +277,7 @@
         border-color: rgba(242, 184, 75, 0.36);
       }
       .ok { color: var(--buy); font-weight: 750; }
+      .warn { color: var(--warn); font-weight: 750; }
       .danger { color: var(--sell); font-weight: 750; }
 
       form {
@@ -525,6 +526,10 @@
           <a class="{% if current_path.startswith('/alerts') %}active{% endif %}" href="/alerts">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 21h3.4"></path><path d="M18 8A6 6 0 0 0 6 8c0 7-3 7-3 9h18c0-2-3-2-3-9"></path></svg>
             Alerts
+          </a>
+          <a class="{% if current_path.startswith('/logs') %}active{% endif %}" href="/logs">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>
+            Logs
           </a>
           <a class="{% if current_path.startswith('/orders') %}active{% endif %}" href="/orders">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>

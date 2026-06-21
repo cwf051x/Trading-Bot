@@ -22,6 +22,7 @@ class MarketScanner:
     def __init__(self, client: BinanceFuturesClient, settings: Any) -> None:
         self.client = client
         self.settings = settings
+        self._oi_failures: list[str] = []
 
     def scan(self) -> list[Any]:
         """Scan the configured market universe once.
@@ -36,6 +37,7 @@ class MarketScanner:
             blacklist=self.settings.alert_blacklist,
             watchlist=self.settings.alert_watchlist,
         )
+        self._oi_failures = []
         btc_klines = self._get_klines_safe("BTC/USDT:USDT", "15m", 2)
         btc_15m_change = pct_change(btc_klines[0].open, btc_klines[-1].close) if len(btc_klines) >= 2 else 0.0
         metrics_rows = []
@@ -48,6 +50,7 @@ class MarketScanner:
                 logger.info("Skipping %s because market data is insufficient", symbol)
                 continue
             metrics_rows.append(metrics)
+        self._log_oi_failure_summary(total_symbols=len(eligible))
         return metrics_rows
 
     def _collect_klines(self, symbol: str) -> dict[str, list[Kline]]:
@@ -86,5 +89,24 @@ class MarketScanner:
         try:
             return self.client.get_open_interest_history(symbol, period="5m", limit=30)
         except Exception as exc:  # pragma: no cover - network dependent
-            logger.warning("Failed to fetch %s OI history: %s", symbol, exc)
+            self._record_oi_failure(symbol, exc)
             return []
+
+    def _record_oi_failure(self, symbol: str, exc: Exception) -> None:
+        """Store per-symbol OI failures for one compact cycle summary.
+        暂存单币种 OI 失败，用于本轮扫描结束后的汇总日志。
+        """
+
+        detail = f"{symbol}: {exc}"
+        self._oi_failures.append(detail)
+        logger.debug("Failed to fetch %s OI history: %s", symbol, exc)
+
+    def _log_oi_failure_summary(self, total_symbols: int) -> None:
+        """Log one OI failure summary instead of flooding warnings per symbol.
+        用一条汇总日志替代每个币一条 WARNING，减少日志噪音。
+        """
+
+        if not self._oi_failures:
+            return
+        samples = "; ".join(self._oi_failures[:5])
+        logger.warning("OI history fetch failed for %s/%s symbols; samples: %s", len(self._oi_failures), total_symbols, samples)

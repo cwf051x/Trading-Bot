@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
+from requests import RequestException
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +141,7 @@ class BinanceFuturesClient:
         """
 
         pair = self._binance_pair(symbol)
-        proxies = {"http": self.proxy, "https": self.proxy} if self.proxy else None
-        response = requests.get(
-            "https://fapi.binance.com/futures/data/openInterestHist",
-            params={"symbol": pair, "period": period, "limit": limit},
-            timeout=10,
-            proxies=proxies,
-        )
+        response = self._get_open_interest_history_response(pair, period=period, limit=limit)
         response.raise_for_status()
         rows = response.json()
         points: list[OpenInterestPoint] = []
@@ -157,6 +152,28 @@ class BinanceFuturesClient:
                 continue
             points.append(OpenInterestPoint(timestamp=int(timestamp), open_interest=float(value)))
         return points
+
+    def _get_open_interest_history_response(self, pair: str, period: str, limit: int) -> requests.Response:
+        """Request OI history with direct-first and proxy fallback.
+        先直连请求 OI 历史，失败后按配置使用代理重试。
+        """
+
+        url = "https://fapi.binance.com/futures/data/openInterestHist"
+        params = {"symbol": pair, "period": period, "limit": limit}
+        try:
+            return requests.get(url, params=params, timeout=8, proxies=None)
+        except RequestException as direct_exc:
+            if not self.proxy:
+                raise
+            logger.info("[network] direct OI history request failed for %s: %s, retrying with proxy", pair, direct_exc)
+            proxies = {"http": self.proxy, "https": self.proxy}
+            try:
+                response = requests.get(url, params=params, timeout=12, proxies=proxies)
+            except RequestException:
+                logger.info("[network] proxy OI history request failed for %s", pair)
+                raise
+            logger.info("[network] proxy OI history request succeeded for %s", pair)
+            return response
 
     @staticmethod
     def _binance_pair(symbol: str) -> str:
