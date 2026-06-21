@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +25,16 @@ class Kline:
     low: float
     close: float
     volume: float
+
+
+@dataclass(frozen=True)
+class OpenInterestPoint:
+    """Open interest history point.
+    持仓量历史点。
+    """
+
+    timestamp: int
+    open_interest: float
 
 
 class BinanceFuturesClient:
@@ -44,6 +56,7 @@ class BinanceFuturesClient:
         }
         if proxy:
             config["proxies"] = {"http": proxy, "https": proxy}
+        self.proxy = proxy
         self.exchange = ccxt.binanceusdm(config)
 
     def get_klines(self, symbol: str, timeframe: str, limit: int, since: int | None = None) -> list[Kline]:
@@ -120,6 +133,42 @@ class BinanceFuturesClient:
             return None
         value = payload.get("openInterestAmount") or payload.get("openInterestValue") or payload.get("openInterest")
         return float(value) if value is not None else None
+
+    def get_open_interest_history(self, symbol: str, period: str = "5m", limit: int = 30) -> list[OpenInterestPoint]:
+        """Fetch Binance futures open interest history.
+        获取 Binance 合约持仓量历史。
+        """
+
+        pair = self._binance_pair(symbol)
+        proxies = {"http": self.proxy, "https": self.proxy} if self.proxy else None
+        response = requests.get(
+            "https://fapi.binance.com/futures/data/openInterestHist",
+            params={"symbol": pair, "period": period, "limit": limit},
+            timeout=10,
+            proxies=proxies,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        points: list[OpenInterestPoint] = []
+        for row in rows:
+            value = row.get("sumOpenInterest") or row.get("sumOpenInterestValue")
+            timestamp = row.get("timestamp")
+            if value is None or timestamp is None:
+                continue
+            points.append(OpenInterestPoint(timestamp=int(timestamp), open_interest=float(value)))
+        return points
+
+    @staticmethod
+    def _binance_pair(symbol: str) -> str:
+        """Convert a ccxt swap symbol to Binance pair text.
+        将 ccxt 合约交易对转换为 Binance pair 文本。
+        """
+
+        normalized = symbol.upper().replace(":USDT", "")
+        if "/" in normalized:
+            base, quote = normalized.split("/", 1)
+            return f"{base}{quote}"
+        return normalized
 
     def get_long_short_ratio(self, symbol: str) -> float | None:
         """Return long-short ratio when a stable endpoint is added.

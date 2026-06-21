@@ -3,7 +3,7 @@
 """
 
 from app.alerts.alert_rules import AlertRuleEngine
-from app.alerts.signal_models import AlertType, MarketMetrics, TimeframeStats
+from app.alerts.signal_models import AlertType, MarketMetrics, ResonanceStats, TimeframeStats
 from app.config import Settings
 from app.data.market_snapshot import build_market_metrics
 from app.exchange.binance import Kline
@@ -40,6 +40,27 @@ def make_metrics(**overrides) -> MarketMetrics:
     return MarketMetrics(**{**metrics.__dict__, **overrides})
 
 
+def make_resonance(**overrides) -> ResonanceStats:
+    stats = ResonanceStats(
+        price_change_15m=0.04,
+        price_change_30m=0.07,
+        price_change_60m=0.12,
+        volume_ratio=2.5,
+        volume_continuity=4,
+        oi_change_15m=0.04,
+        oi_change_30m=0.09,
+        oi_change_60m=0.12,
+        ma7=1.18,
+        ma25=1.10,
+        ma99=0.95,
+        rsi6=72,
+        rsi24=68,
+        bullish_5m_count_6=4,
+        ma25_deviation=0.04,
+    )
+    return ResonanceStats(**{**stats.__dict__, **overrides})
+
+
 def alert_types(metrics: MarketMetrics, state: dict | None = None) -> set[AlertType]:
     """Evaluate rules and return alert types.
     执行规则并返回提醒类型集合。
@@ -49,9 +70,15 @@ def alert_types(metrics: MarketMetrics, state: dict | None = None) -> set[AlertT
 
 
 def test_top_gainer_momentum_rule() -> None:
+    types = alert_types(make_metrics(resonance=make_resonance()))
+
+    assert AlertType.VOLUME_PRICE_OI_RESONANCE in types
+
+
+def test_legacy_alert_rules_are_disabled() -> None:
     types = alert_types(make_metrics())
 
-    assert AlertType.TOP_GAINER_MOMENTUM in types
+    assert AlertType.TOP_GAINER_MOMENTUM not in types
 
 
 def test_short_term_surge_rule() -> None:
@@ -59,7 +86,7 @@ def test_short_term_surge_rule() -> None:
 
     types = alert_types(metrics)
 
-    assert AlertType.SHORT_TERM_SURGE in types
+    assert AlertType.SHORT_TERM_SURGE not in types
 
 
 def test_short_term_surge_requires_strong_close() -> None:
@@ -73,7 +100,7 @@ def test_short_term_surge_requires_strong_close() -> None:
 def test_multi_timeframe_breakout_rule() -> None:
     types = alert_types(make_metrics())
 
-    assert AlertType.MULTI_TIMEFRAME_BREAKOUT in types
+    assert AlertType.MULTI_TIMEFRAME_BREAKOUT not in types
 
 
 def test_strong_pullback_watch_rule() -> None:
@@ -85,7 +112,7 @@ def test_strong_pullback_watch_rule() -> None:
 
     types = alert_types(metrics)
 
-    assert AlertType.STRONG_PULLBACK_WATCH in types
+    assert AlertType.STRONG_PULLBACK_WATCH not in types
 
 
 def test_pullback_second_leg_rule() -> None:
@@ -96,15 +123,15 @@ def test_pullback_second_leg_rule() -> None:
 
     types = alert_types(metrics, {"state": "pullback_watch", "support_price": 1.02, "watch_high": 1.25})
 
-    assert AlertType.PULLBACK_SECOND_LEG in types
+    assert AlertType.PULLBACK_SECOND_LEG not in types
 
 
 def test_high_risk_extension_rule() -> None:
-    metrics = make_metrics(stats_15m=TimeframeStats(change=0.10, volume_ratio=2.8, recent_high=1.25, higher_lows=True, large_green_count=4))
+    metrics = make_metrics(resonance=make_resonance(price_change_60m=0.22, rsi6=88, ma25_deviation=0.12, oi_change_60m=0.25, long_upper_wick=True))
 
     types = alert_types(metrics)
 
-    assert AlertType.HIGH_RISK_EXTENSION in types
+    assert AlertType.VOLUME_PRICE_OI_RESONANCE in types
 
 
 def test_btc_dump_blocks_long_bias_alerts() -> None:

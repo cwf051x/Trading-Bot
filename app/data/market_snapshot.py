@@ -7,8 +7,8 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from app.alerts.signal_models import MarketMetrics, TimeframeStats
-from app.exchange.binance import Kline
+from app.alerts.signal_models import MarketMetrics, ResonanceStats, TimeframeStats
+from app.exchange.binance import Kline, OpenInterestPoint
 
 
 def pct_change(start: float, end: float) -> float:
@@ -83,6 +83,64 @@ def compute_atr_ratio(klines: list[Kline], period: int = 14) -> float:
     return mean(true_ranges) / latest_close if latest_close else 0.0
 
 
+def moving_average(values: list[float], window: int) -> float:
+    """Return simple moving average for the latest window.
+    返回最近窗口的简单均线。
+    """
+
+    if len(values) < window:
+        return 0.0
+    return mean(values[-window:])
+
+
+def oi_change(history: list[OpenInterestPoint], intervals: int) -> float:
+    """Return OI change over a number of 5m intervals.
+    返回指定 5m 间隔的持仓量变化。
+    """
+
+    if len(history) <= intervals:
+        return 0.0
+    return pct_change(history[-(intervals + 1)].open_interest, history[-1].open_interest)
+
+
+def build_resonance_stats(klines_5m: list[Kline], oi_history: list[OpenInterestPoint]) -> ResonanceStats | None:
+    """Build volume-price-OI resonance metrics from 5m candles and OI history.
+    根据 5m K 线和 OI 历史构建量价 OI 共振指标。
+    """
+
+    if len(klines_5m) < 100 or len(oi_history) < 13:
+        return None
+    current = klines_5m[-1]
+    closes = [item.close for item in klines_5m]
+    volume_base = [item.volume for item in klines_5m[-21:-1]]
+    volume_ma20 = mean(volume_base) if volume_base else 0.0
+    recent_six = klines_5m[-6:]
+    volume_ratio = current.volume / volume_ma20 if volume_ma20 else 0.0
+    volume_continuity = sum(1 for item in recent_six if volume_ma20 and item.volume > 2 * volume_ma20)
+    upper_wick = current.high - max(current.open, current.close)
+    body = abs(current.close - current.open)
+    ma25 = moving_average(closes, 25)
+    return ResonanceStats(
+        price_change_15m=pct_change(klines_5m[-4].close, current.close),
+        price_change_30m=pct_change(klines_5m[-7].close, current.close),
+        price_change_60m=pct_change(klines_5m[-13].close, current.close),
+        volume_ratio=volume_ratio,
+        volume_continuity=volume_continuity,
+        oi_change_15m=oi_change(oi_history, 3),
+        oi_change_30m=oi_change(oi_history, 6),
+        oi_change_60m=oi_change(oi_history, 12),
+        ma7=moving_average(closes, 7),
+        ma25=ma25,
+        ma99=moving_average(closes, 99),
+        rsi6=compute_rsi(klines_5m, 6),
+        rsi24=compute_rsi(klines_5m, 24),
+        bullish_5m_count_6=sum(1 for item in recent_six if item.close > item.open),
+        ma25_deviation=(current.close / ma25 - 1) if ma25 else 0.0,
+        long_upper_wick=upper_wick > max(body * 1.5, current.close * 0.004) and volume_ratio > 2,
+        consecutive_red_5m=len(recent_six) >= 2 and recent_six[-1].close < recent_six[-1].open and recent_six[-2].close < recent_six[-2].open,
+    )
+
+
 def compute_timeframe_stats(klines: list[Kline], breakout_window: int = 20, volume_window: int = 20, ma_window: int = 20) -> TimeframeStats:
     """Compute compact technical statistics from candles.
     根据 K 线计算紧凑技术指标。
@@ -136,6 +194,7 @@ def build_market_metrics(
     rank_24h: int | None = None,
     funding_rate: float | None = None,
     open_interest: float | None = None,
+    oi_history: list[OpenInterestPoint] | None = None,
 ) -> MarketMetrics | None:
     """Build derived metrics for one symbol, returning None when data is insufficient.
     为单个交易对构建派生指标；数据不足时返回 None。
@@ -164,5 +223,6 @@ def build_market_metrics(
         btc_15m_change=btc_15m_change,
         funding_rate=funding_rate,
         open_interest=open_interest,
+        resonance=build_resonance_stats(klines_by_timeframe["5m"], oi_history or []),
         raw={"ticker": ticker},
     )

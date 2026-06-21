@@ -5,45 +5,71 @@
     <h1>Market Alerts</h1>
     <p class="lead">Recent radar signals, Telegram delivery status, and suggested action. Signals are alerts only, not trading instructions.</p>
   </div>
-  <span class="badge ok">No Live Orders</span>
+  <div class="topbar-status">
+    <a class="button secondary" href="/alerts">Only Resonance</a>
+    <a class="button secondary" href="/alerts?type=all">All Alerts</a>
+    <span class="badge ok">No Live Orders</span>
+  </div>
 </div>
 
 {% if rows %}
-<div class="table-wrap">
-  <table>
+<div class="table-wrap fit-table">
+  <table class="alert-table">
+    <colgroup>
+      <col style="width: 108px;">
+      <col style="width: 72px;">
+      <col style="width: 158px;">
+      <col style="width: 62px;">
+      <col style="width: 92px;">
+      <col style="width: 148px;">
+      <col style="width: 116px;">
+      <col>
+    </colgroup>
     <thead>
       <tr>
         <th>Time</th>
         <th>Symbol</th>
-        <th>Type</th>
-        <th>Level</th>
+        <th>Signal</th>
         <th>Score</th>
         <th>Price</th>
-        <th>15m</th>
-        <th>1h</th>
-        <th>24h</th>
-        <th>Volume</th>
-        <th>Telegram</th>
-        <th>Action</th>
-        <th>Reason</th>
+        <th>Change</th>
+        <th>Market</th>
+        <th>Detail</th>
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
       <tr>
-        <td>{{ row.timestamp | datetime_ms }}</td>
-        <td>{{ row.symbol }}</td>
-        <td>{{ row.alert_type }}</td>
-        <td><span class="badge {% if row.level == 'A' %}danger{% elif row.level == 'B' %}warn{% else %}ok{% endif %}">{{ row.level }}</span></td>
+        <td class="time-cell">{{ row.timestamp | datetime_ms }}</td>
+        <td class="symbol-cell">{{ row.symbol | symbol_base }}</td>
+        <td>
+          <div class="cell-stack">
+            <div class="cell-main">{{ row.alert_type | alert_type_label }}</div>
+            <div class="cell-row">
+              <span class="badge {% if row.level == 'A' %}danger{% elif row.level == 'B' %}warn{% else %}ok{% endif %}">{{ row.level }}</span>
+              {% if row.sent_to_telegram %}<span class="ok">sent</span>{% else %}<span class="meta">stored</span>{% endif %}
+            </div>
+          </div>
+        </td>
         <td>{{ row.score }}</td>
         <td>{{ "%.8g"|format(row.price) }}</td>
-        <td>{{ row.price_change_15m | percent }}</td>
-        <td>{{ row.price_change_1h | percent }}</td>
-        <td>{{ row.price_change_24h | percent }}</td>
-        <td>{{ "%.2fx"|format(row.volume_ratio) }}</td>
-        <td>{% if row.sent_to_telegram %}<span class="ok">sent</span>{% else %}<span class="meta">stored</span>{% endif %}</td>
-        <td class="reason">{{ row.suggested_action }}</td>
-        <td class="reason">{{ row.reason }}</td>
+        <td>
+          <div class="cell-stack">
+            <div class="cell-row"><span class="cell-label">15m</span><span class="cell-main">{{ row.price_change_15m | percent }}</span></div>
+            <div class="cell-row"><span class="cell-label">1h</span><span class="cell-main">{{ row.price_change_1h | percent }}</span></div>
+            <div class="cell-row"><span class="cell-label">24h</span><span class="cell-main">{{ row.price_change_24h | percent }}</span></div>
+          </div>
+        </td>
+        <td>
+          <div class="cell-stack">
+            <div class="cell-row"><span class="cell-label">Vol</span><span class="cell-main">{{ "%.2fx"|format(row.volume_ratio) }}</span></div>
+            <div class="cell-row"><span class="cell-label">BTC</span><span class="cell-main">{{ row.btc_15m_change | percent }}</span></div>
+          </div>
+        </td>
+        <td class="detail-cell">
+          <strong>{{ row.suggested_action }}</strong>
+          <div class="reason-line">{{ row.reason | chinese_reason }}</div>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

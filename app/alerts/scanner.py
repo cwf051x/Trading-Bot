@@ -32,20 +32,18 @@ class MarketScanner:
         eligible = filter_symbol_universe(
             tickers=tickers,
             min_quote_volume=self.settings.alert_min_24h_quote_volume_usdt,
+            top_gainers_limit=self.settings.alert_top_gainers_limit,
             blacklist=self.settings.alert_blacklist,
             watchlist=self.settings.alert_watchlist,
         )
-        top_rank = {ticker["symbol"]: index + 1 for index, ticker in enumerate(eligible)}
         btc_klines = self._get_klines_safe("BTC/USDT:USDT", "15m", 2)
         btc_15m_change = pct_change(btc_klines[0].open, btc_klines[-1].close) if len(btc_klines) >= 2 else 0.0
         metrics_rows = []
         for ticker in eligible:
             symbol = ticker["symbol"]
             klines = self._collect_klines(symbol)
-            # TODO: Enrich top candidates with funding, OI, and long-short ratio after
-            # adding rate-limit aware batching.
-            # TODO（中文）: 后续增加限频友好的候选币二次增强，再接资金费率、OI 和多空比。
-            metrics = build_market_metrics(ticker=ticker, klines_by_timeframe=klines, btc_15m_change=btc_15m_change, rank_24h=top_rank.get(symbol))
+            oi_history = self._get_open_interest_history_safe(symbol)
+            metrics = build_market_metrics(ticker=ticker, klines_by_timeframe=klines, btc_15m_change=btc_15m_change, rank_24h=ticker.get("rank_24h"), oi_history=oi_history)
             if metrics is None:
                 logger.info("Skipping %s because market data is insufficient", symbol)
                 continue
@@ -78,4 +76,15 @@ class MarketScanner:
             return self.client.get_klines(symbol, timeframe, limit=limit)
         except Exception as exc:  # pragma: no cover - network dependent
             logger.warning("Failed to fetch %s %s klines: %s", symbol, timeframe, exc)
+            return []
+
+    def _get_open_interest_history_safe(self, symbol: str) -> list[Any]:
+        """Fetch OI history without crashing the full scan.
+        获取 OI 历史，单个失败不导致整轮扫描崩溃。
+        """
+
+        try:
+            return self.client.get_open_interest_history(symbol, period="5m", limit=30)
+        except Exception as exc:  # pragma: no cover - network dependent
+            logger.warning("Failed to fetch %s OI history: %s", symbol, exc)
             return []

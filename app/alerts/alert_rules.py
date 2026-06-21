@@ -27,18 +27,76 @@ class AlertRuleEngine:
             return []
         state = state or {}
         results: list[AlertRuleResult] = []
-        for rule in (
-            self._top_gainer_momentum,
-            self._short_term_surge,
-            self._multi_timeframe_breakout,
-            self._strong_pullback_watch,
-            self._pullback_second_leg,
-            self._high_risk_extension,
-        ):
-            result = rule(metrics, state)
-            if result:
-                results.append(result)
+        result = self._volume_price_oi_resonance(metrics, state)
+        if result:
+            results.append(result)
         return results
+
+    def _volume_price_oi_resonance(self, metrics: MarketMetrics, state: dict[str, Any]) -> AlertRuleResult | None:
+        """Detect volume-price-OI resonance on 5m candles.
+        识别 5m 主周期的量价 OI 共振拉升。
+        """
+
+        stats = metrics.resonance
+        if stats is None:
+            return None
+        l3 = (
+            stats.price_change_60m > 0.20
+            and stats.rsi6 is not None
+            and stats.rsi6 > 85
+            and stats.ma25_deviation > 0.10
+            and stats.oi_change_60m > 0.20
+            and (stats.long_upper_wick or stats.consecutive_red_5m)
+        )
+        if l3:
+            return AlertRuleResult(
+                AlertType.VOLUME_PRICE_OI_RESONANCE,
+                90,
+                [
+                    "L3 high extension risk / L3 高位过热风险",
+                    "price, volume and OI expanded together / 价格、成交量、持仓量同步扩张",
+                ],
+                "L3 高位过热风险，优先观察回落，不自动追入",
+                metadata={"resonance_level": "L3"},
+            )
+        l2 = (
+            stats.price_change_30m > 0.06
+            and stats.price_change_60m > 0.10
+            and stats.bullish_5m_count_6 >= 4
+            and stats.volume_continuity >= 4
+            and stats.oi_change_30m > 0.08
+            and metrics.price > stats.ma7 > stats.ma25
+        )
+        if l2:
+            return AlertRuleResult(
+                AlertType.VOLUME_PRICE_OI_RESONANCE,
+                85,
+                [
+                    "L2 main rally confirmation / L2 强拉主升确认",
+                    "price, volume and OI expanded together / 价格、成交量、持仓量同步扩张",
+                ],
+                "L2 强拉主升确认，可用模拟单跟踪信号质量",
+                metadata={"resonance_level": "L2"},
+            )
+        l1 = (
+            stats.price_change_15m > 0.03
+            and stats.volume_ratio > 2
+            and stats.oi_change_15m > 0.03
+            and metrics.price > stats.ma7
+            and metrics.price > stats.ma25
+        )
+        if l1:
+            return AlertRuleResult(
+                AlertType.VOLUME_PRICE_OI_RESONANCE,
+                70,
+                [
+                    "L1 unusual move watch / L1 异动观察",
+                    "price, volume and OI expanded together / 价格、成交量、持仓量同步扩张",
+                ],
+                "L1 异动观察，等待是否升级为主升确认",
+                metadata={"resonance_level": "L1"},
+            )
+        return None
 
     def _base_score(self, metrics: MarketMetrics) -> tuple[int, list[str]]:
         score = score_metrics(metrics)

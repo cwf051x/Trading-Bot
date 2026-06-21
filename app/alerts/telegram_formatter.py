@@ -14,6 +14,7 @@ ALERT_TYPE_TITLES = {
     AlertType.STRONG_PULLBACK_WATCH: "强势回调观察 / Strong Pullback Watch",
     AlertType.PULLBACK_SECOND_LEG: "回调二启 / Pullback Second Leg",
     AlertType.HIGH_RISK_EXTENSION: "高位风险 / High-Risk Extension",
+    AlertType.VOLUME_PRICE_OI_RESONANCE: "量价OI共振拉升 / Volume Price OI Resonance",
 }
 
 

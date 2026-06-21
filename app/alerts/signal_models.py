@@ -20,6 +20,7 @@ class AlertType(str, Enum):
     STRONG_PULLBACK_WATCH = "STRONG_PULLBACK_WATCH"
     PULLBACK_SECOND_LEG = "PULLBACK_SECOND_LEG"
     HIGH_RISK_EXTENSION = "HIGH_RISK_EXTENSION"
+    VOLUME_PRICE_OI_RESONANCE = "VOLUME_PRICE_OI_RESONANCE"
 
 
 class AlertLevel(str, Enum):
@@ -56,6 +57,31 @@ class TimeframeStats:
 
 
 @dataclass(frozen=True)
+class ResonanceStats:
+    """Derived fields for volume-price-OI resonance.
+    量价 OI 共振使用的派生字段。
+    """
+
+    price_change_15m: float = 0.0
+    price_change_30m: float = 0.0
+    price_change_60m: float = 0.0
+    volume_ratio: float = 0.0
+    volume_continuity: int = 0
+    oi_change_15m: float = 0.0
+    oi_change_30m: float = 0.0
+    oi_change_60m: float = 0.0
+    ma7: float = 0.0
+    ma25: float = 0.0
+    ma99: float = 0.0
+    rsi6: float | None = None
+    rsi24: float | None = None
+    bullish_5m_count_6: int = 0
+    ma25_deviation: float = 0.0
+    long_upper_wick: bool = False
+    consecutive_red_5m: bool = False
+
+
+@dataclass(frozen=True)
 class MarketMetrics:
     """Derived market metrics consumed by rules and scoring.
     供规则和评分使用的行情派生指标。
@@ -76,6 +102,7 @@ class MarketMetrics:
     btc_15m_change: float = 0.0
     funding_rate: float | None = None
     open_interest: float | None = None
+    resonance: ResonanceStats | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

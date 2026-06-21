@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.backtest.engine import BacktestEngine
 from app.config import Settings
+from app.data.symbol_universe import symbol_base
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.momentum_oi import MomentumOIStrategy
 from app.web.env_editor import update_env_values
@@ -47,6 +48,53 @@ def format_percent(value: int | float | None) -> str:
 
 templates.env.filters["datetime_ms"] = format_datetime_ms
 templates.env.filters["percent"] = format_percent
+
+ALERT_TYPE_LABELS = {
+    "TOP_GAINER_MOMENTUM": "涨幅榜强势",
+    "SHORT_TERM_SURGE": "短周期异动",
+    "MULTI_TIMEFRAME_BREAKOUT": "多周期突破",
+    "STRONG_PULLBACK_WATCH": "强势回调观察",
+    "PULLBACK_SECOND_LEG": "回调二启",
+    "HIGH_RISK_EXTENSION": "高位风险延伸",
+    "VOLUME_PRICE_OI_RESONANCE": "量价OI共振",
+}
+
+
+def display_symbol_base(symbol: str) -> str:
+    """Return compact base asset text for web tables.
+    返回表格使用的精简币名。
+    """
+
+    return symbol_base(symbol)
+
+
+def alert_type_label(alert_type: str) -> str:
+    """Translate stored alert type values for operators.
+    将入库的提醒类型翻译成中文运营文案。
+    """
+
+    return ALERT_TYPE_LABELS.get(alert_type, alert_type)
+
+
+def chinese_reason_text(reason: str) -> str:
+    """Keep only the Chinese half of bilingual alert reasons.
+    只展示双语提醒理由中的中文部分。
+    """
+
+    parts = []
+    for item in reason.split(";"):
+        text = item.strip()
+        if not text:
+            continue
+        if "/" in text:
+            text = text.rsplit("/", 1)[-1].strip()
+        parts.append(text)
+    return "；".join(parts)
+
+
+templates.env.filters["symbol_base"] = display_symbol_base
+templates.env.filters["alert_type_label"] = alert_type_label
+templates.env.filters["chinese_reason"] = chinese_reason_text
 
 
 def create_app() -> FastAPI:
@@ -249,7 +297,19 @@ def create_app() -> FastAPI:
     def alerts_page(request: Request, _: None = Depends(require_admin)) -> Response:
         settings = Settings()
         storage = build_storage(settings)
-        return templates.TemplateResponse(request, "alerts.html", base_context(request, settings, rows=storage.get_market_alerts(limit=300), title="Market Alerts"))
+        alert_filter = request.query_params.get("type", "VOLUME_PRICE_OI_RESONANCE")
+        alert_type = None if alert_filter == "all" else alert_filter
+        return templates.TemplateResponse(
+            request,
+            "alerts.html",
+            base_context(
+                request,
+                settings,
+                rows=storage.get_market_alerts(limit=300, alert_type=alert_type),
+                alert_filter=alert_filter,
+                title="Market Alerts",
+            ),
+        )
 
     @app.get("/positions")
     def positions_page(request: Request, _: None = Depends(require_admin)) -> Response:

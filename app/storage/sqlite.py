@@ -325,13 +325,16 @@ class SQLiteStorage:
             )
             return int(cursor.lastrowid)
 
-    def get_market_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
+    def get_market_alerts(self, limit: int = 100, alert_type: str | None = None) -> list[dict[str, Any]]:
         """Return recent market alerts.
         返回最近的行情提醒。
         """
 
         with self.connect() as connection:
-            rows = connection.execute("SELECT * FROM market_alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            if alert_type:
+                rows = connection.execute("SELECT * FROM market_alerts WHERE alert_type = ? ORDER BY id DESC LIMIT ?", (alert_type, limit)).fetchall()
+            else:
+                rows = connection.execute("SELECT * FROM market_alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
     def get_last_market_alert(self, symbol: str, alert_type: str, sent_only: bool = False) -> dict[str, Any] | None:

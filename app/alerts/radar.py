@@ -14,18 +14,30 @@ from app.alerts.scanner import MarketScanner
 from app.alerts.scoring import level_from_score
 from app.alerts.signal_models import AlertLevel, AlertSignal, AlertType, MarketMetrics
 from app.alerts.telegram_formatter import format_alert_message
+from app.execution.paper import PaperTradingEngine
 from app.notify.telegram import TelegramNotifier
+from app.risk.manager import RiskManager
 from app.storage.sqlite import SQLiteStorage
+from app.strategies.base import Signal
 
 logger = logging.getLogger(__name__)
 
 ALERT_NOTIFICATION_PRIORITY = {
     AlertType.HIGH_RISK_EXTENSION: 100,
+    AlertType.VOLUME_PRICE_OI_RESONANCE: 98,
     AlertType.PULLBACK_SECOND_LEG: 95,
     AlertType.MULTI_TIMEFRAME_BREAKOUT: 90,
     AlertType.SHORT_TERM_SURGE: 80,
     AlertType.TOP_GAINER_MOMENTUM: 70,
     AlertType.STRONG_PULLBACK_WATCH: 60,
+}
+
+AUTO_PAPER_ENTRY_TYPES = {
+    AlertType.TOP_GAINER_MOMENTUM,
+    AlertType.SHORT_TERM_SURGE,
+    AlertType.MULTI_TIMEFRAME_BREAKOUT,
+    AlertType.PULLBACK_SECOND_LEG,
+    AlertType.VOLUME_PRICE_OI_RESONANCE,
 }
 
 
@@ -34,11 +46,21 @@ class MarketAlertRadar:
     运行一轮或多轮行情雷达扫描。
     """
 
-    def __init__(self, scanner: MarketScanner, storage: SQLiteStorage, notifier: TelegramNotifier, settings: Any) -> None:
+    def __init__(
+        self,
+        scanner: MarketScanner,
+        storage: SQLiteStorage,
+        notifier: TelegramNotifier,
+        settings: Any,
+        paper: PaperTradingEngine | None = None,
+        risk_manager: RiskManager | None = None,
+    ) -> None:
         self.scanner = scanner
         self.storage = storage
         self.notifier = notifier
         self.settings = settings
+        self.paper = paper
+        self.risk_manager = risk_manager
         self.rules = AlertRuleEngine(settings)
         self.state = AlertStateManager(storage, settings)
         self._last_error_sent_at = 0.0
@@ -58,33 +80,79 @@ class MarketAlertRadar:
             logger.exception("Alert radar scan failed: %s", exc)
             self._notify_error_throttled(f"Alert radar scan failed: {exc}")
             return []
-        alerts: list[AlertSignal] = []
+        cycle_candidates: list[AlertSignal] = []
         for metrics in metrics_rows:
+            if self.paper:
+                self.paper.update_open_positions(metrics.symbol, metrics.price, int(time.time() * 1000))
             state = self.state.get_state(metrics.symbol)
             symbol_alerts: list[AlertSignal] = []
             for result in self.rules.evaluate(metrics, state):
                 alert = self._build_alert(metrics, result.alert_type, result.score, result.reasons, result.suggested_action, result.invalidation_price, result.target_1, result.target_2, result.metadata)
                 if alert.level == AlertLevel.IGNORE:
                     continue
+                if alert.score < self.settings.alert_min_score_to_store:
+                    logger.info("Alert %s %s ignored because score %s is below store threshold", alert.symbol, alert.alert_type.value, alert.score)
+                    continue
                 symbol_alerts.append(alert)
-            notification_winner = self._select_notification_winner(symbol_alerts)
-            for alert in symbol_alerts:
-                should_send = self.state.should_send(alert)
-                if notification_winner and alert.alert_type != notification_winner.alert_type:
-                    should_send = False
-                sent_to_telegram = False
-                if should_send:
-                    sent_to_telegram = self.notifier.send_message(format_alert_message(alert))
-                persisted_alert = AlertSignal(**{**alert.__dict__, "sent_to_telegram": sent_to_telegram})
-                self.state.record_alert(persisted_alert, sent_to_telegram=sent_to_telegram)
-                if should_send and not sent_to_telegram:
-                    logger.warning("Alert %s %s qualified for Telegram but send failed", alert.symbol, alert.alert_type.value)
-                if notification_winner and alert.alert_type != notification_winner.alert_type:
-                    logger.info("Alert %s %s stored without Telegram because %s has same-cycle priority", alert.symbol, alert.alert_type.value, notification_winner.alert_type.value)
-                elif not should_send:
-                    logger.info("Alert %s %s stored without Telegram because level config or cooldown blocked it", alert.symbol, alert.alert_type.value)
-                alerts.append(persisted_alert)
+            symbol_winner = self._select_symbol_winner(symbol_alerts)
+            if symbol_winner:
+                cycle_candidates.append(symbol_winner)
+        alerts: list[AlertSignal] = []
+        for alert in self._select_cycle_alerts(cycle_candidates):
+            if not self.state.should_record(alert):
+                logger.info("Alert %s %s skipped because storage cooldown blocked it", alert.symbol, alert.alert_type.value)
+                continue
+            should_send = self.state.should_send(alert)
+            sent_to_telegram = False
+            if should_send:
+                sent_to_telegram = self.notifier.send_message(format_alert_message(alert))
+            persisted_alert = AlertSignal(**{**alert.__dict__, "sent_to_telegram": sent_to_telegram})
+            self.state.record_alert(persisted_alert, sent_to_telegram=sent_to_telegram)
+            self._process_auto_paper_order(persisted_alert)
+            notifier_enabled = bool(getattr(self.notifier, "enabled", False))
+            if should_send and not sent_to_telegram and notifier_enabled:
+                logger.warning("Alert %s %s qualified for Telegram but send failed", alert.symbol, alert.alert_type.value)
+            elif not should_send:
+                logger.info("Alert %s %s stored without Telegram because level config or cooldown blocked it", alert.symbol, alert.alert_type.value)
+            alerts.append(persisted_alert)
         return sorted(alerts, key=lambda item: item.score, reverse=True)
+
+    def _process_auto_paper_order(self, alert: AlertSignal) -> None:
+        """Create a simulated order for actionable alert entries.
+        根据可交易的 alert 创建模拟订单。
+        """
+
+        if not self.paper or not self.risk_manager:
+            return
+        if not self.settings.alert_auto_paper_trading_enabled:
+            return
+        if alert.alert_type not in AUTO_PAPER_ENTRY_TYPES:
+            logger.info("Alert %s %s does not create paper order because it is not an entry type", alert.symbol, alert.alert_type.value)
+            return
+        if alert.alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE and alert.raw.get("metadata", {}).get("resonance_level") != "L2":
+            logger.info("Alert %s %s does not create paper order because resonance level is not L2", alert.symbol, alert.alert_type.value)
+            return
+        if alert.price <= 0:
+            return
+        stop_loss = alert.invalidation_price if alert.invalidation_price is not None else alert.price * (1 - self.settings.strategy_stop_loss_pct)
+        take_profit = alert.target_1 if alert.target_1 is not None else alert.price * (1 + self.settings.strategy_take_profit_pct)
+        signal = Signal(
+            symbol=alert.symbol,
+            side="long",
+            confidence=alert.score / 100,
+            entry_price=alert.price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            reason=f"alert {alert.alert_type.value}: {alert.suggested_action}",
+            timestamp=alert.timestamp,
+        )
+        decision = self.risk_manager.evaluate(signal, market_context={})
+        if not decision.allowed:
+            logger.info("Alert %s %s paper order blocked by risk: %s", alert.symbol, alert.alert_type.value, decision.reason)
+            return
+        order = self.paper.process_signal(signal, quantity=decision.position_size)
+        if order:
+            logger.info("Alert %s %s created paper order #%s", alert.symbol, alert.alert_type.value, order.id)
 
     def _select_notification_winner(self, alerts: list[AlertSignal]) -> AlertSignal | None:
         """Select at most one Telegram candidate for the same symbol in one cycle.
@@ -95,6 +163,34 @@ class MarketAlertRadar:
         if not candidates:
             return None
         return max(candidates, key=lambda alert: (ALERT_NOTIFICATION_PRIORITY[alert.alert_type], alert.score))
+
+    def _select_symbol_winner(self, alerts: list[AlertSignal]) -> AlertSignal | None:
+        """Select the single strongest alert for one symbol in one cycle.
+        为单个交易对在一轮扫描中只保留最强的一条提醒。
+        """
+
+        if not alerts:
+            return None
+        return max(alerts, key=self._alert_rank)
+
+    def _select_cycle_alerts(self, alerts: list[AlertSignal]) -> list[AlertSignal]:
+        """Select the highest-quality alerts allowed for one scan cycle.
+        从一轮扫描中选出允许入库的最高质量提醒。
+        """
+
+        limit = max(0, int(self.settings.alert_max_alerts_per_cycle))
+        if limit == 0:
+            return []
+        return sorted(alerts, key=self._alert_rank, reverse=True)[:limit]
+
+    @staticmethod
+    def _alert_rank(alert: AlertSignal) -> tuple[int, int, int]:
+        """Rank alerts by level, rule priority, and score.
+        按等级、规则优先级和分数给提醒排序。
+        """
+
+        level_rank = {AlertLevel.A: 3, AlertLevel.B: 2, AlertLevel.C: 1}.get(alert.level, 0)
+        return (level_rank, ALERT_NOTIFICATION_PRIORITY[alert.alert_type], alert.score)
 
     def _build_alert(
         self,
@@ -113,6 +209,12 @@ class MarketAlertRadar:
         """
 
         volume_ratio = max(metrics.stats_3m.volume_ratio, metrics.stats_5m.volume_ratio, metrics.stats_15m.volume_ratio)
+        price_change_15m = metrics.stats_15m.change
+        price_change_1h = metrics.stats_1h.change
+        if metrics.resonance is not None:
+            volume_ratio = metrics.resonance.volume_ratio
+            price_change_15m = metrics.resonance.price_change_15m
+            price_change_1h = metrics.resonance.price_change_60m
         return AlertSignal(
             timestamp=int(time.time() * 1000),
             symbol=metrics.symbol,
@@ -122,8 +224,8 @@ class MarketAlertRadar:
             price=metrics.price,
             price_change_3m=metrics.stats_3m.change,
             price_change_5m=metrics.stats_5m.change,
-            price_change_15m=metrics.stats_15m.change,
-            price_change_1h=metrics.stats_1h.change,
+            price_change_15m=price_change_15m,
+            price_change_1h=price_change_1h,
             price_change_24h=metrics.price_change_24h,
             volume_ratio=volume_ratio,
             btc_15m_change=metrics.btc_15m_change,

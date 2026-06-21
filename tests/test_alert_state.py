@@ -51,6 +51,19 @@ def test_alert_state_cooldown_blocks_duplicate(tmp_path: Path) -> None:
     assert manager.should_send(make_alert(timestamp=alert.timestamp + 700_000), now_ms=alert.timestamp + 700_000) is True
 
 
+def test_alert_state_record_cooldown_blocks_duplicate_when_telegram_disabled(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "alerts.sqlite")
+    storage.initialize()
+    manager = AlertStateManager(storage, Settings(_env_file=None))
+    alert = make_alert()
+
+    assert manager.should_record(alert, now_ms=alert.timestamp) is True
+    manager.record_alert(alert, sent_to_telegram=False)
+
+    assert manager.should_record(make_alert(timestamp=alert.timestamp + 60_000), now_ms=alert.timestamp + 60_000) is False
+    assert manager.should_record(make_alert(timestamp=alert.timestamp + 700_000), now_ms=alert.timestamp + 700_000) is True
+
+
 def test_alert_state_persists_market_alert(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "alerts.sqlite")
     storage.initialize()

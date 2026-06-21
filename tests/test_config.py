@@ -37,10 +37,13 @@ def test_settings_defaults(monkeypatch) -> None:
         "WEB_ADMIN_TOKEN",
         "WEB_HOST",
         "WEB_PORT",
-        "ALERT_RADAR_ENABLED",
-        "ALERT_SCAN_INTERVAL_SECONDS",
-        "ALERT_TOP_GAINERS_LIMIT",
-        "ALERT_MIN_24H_QUOTE_VOLUME_USDT",
+            "ALERT_RADAR_ENABLED",
+            "ALERT_AUTO_PAPER_TRADING_ENABLED",
+            "ALERT_SCAN_INTERVAL_SECONDS",
+            "ALERT_TOP_GAINERS_LIMIT",
+            "ALERT_MAX_ALERTS_PER_CYCLE",
+            "ALERT_MIN_SCORE_TO_STORE",
+            "ALERT_MIN_24H_QUOTE_VOLUME_USDT",
         "ALERT_BLACKLIST",
         "ALERT_WATCHLIST",
         "ALERT_SEND_A_LEVEL",
@@ -80,8 +83,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.web_host == "127.0.0.1"
     assert settings.web_port == 8000
     assert settings.alert_radar_enabled is True
+    assert settings.alert_auto_paper_trading_enabled is True
     assert settings.alert_scan_interval_seconds == 60
-    assert settings.alert_top_gainers_limit == 50
+    assert settings.alert_top_gainers_limit == 30
+    assert settings.alert_max_alerts_per_cycle == 5
+    assert settings.alert_min_score_to_store == 70
     assert settings.alert_min_24h_quote_volume_usdt == 10_000_000
     assert settings.alert_blacklist == []
     assert settings.alert_watchlist == []

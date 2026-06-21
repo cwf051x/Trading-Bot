@@ -56,10 +56,44 @@ class AlertStateManager:
         last_alert = self.storage.get_last_market_alert(alert.symbol, alert.alert_type.value, sent_only=True)
         if not last_alert:
             return True
+        if self._is_level_upgrade(last_alert, alert):
+            return True
         last_alert_at = int(last_alert.get("timestamp") or 0)
         now_ms = now_ms or alert.timestamp or int(time.time() * 1000)
         elapsed_seconds = max(0, (now_ms - last_alert_at) / 1000)
         return elapsed_seconds >= self.cooldown_seconds(alert.level)
+
+    def should_record(self, alert: AlertSignal, now_ms: int | None = None) -> bool:
+        """Return whether this alert should be persisted now.
+        判断当前是否应该把该提醒入库。
+        """
+
+        if alert.level == AlertLevel.IGNORE:
+            return False
+        last_alert = self.storage.get_last_market_alert(alert.symbol, alert.alert_type.value, sent_only=False)
+        if not last_alert:
+            return True
+        if self._is_level_upgrade(last_alert, alert):
+            return True
+        last_alert_at = int(last_alert.get("timestamp") or 0)
+        now_ms = now_ms or alert.timestamp or int(time.time() * 1000)
+        elapsed_seconds = max(0, (now_ms - last_alert_at) / 1000)
+        return elapsed_seconds >= self.cooldown_seconds(alert.level)
+
+    def _is_level_upgrade(self, last_alert: dict[str, Any], alert: AlertSignal) -> bool:
+        """Allow urgent upgraded signals to bypass the normal repeat cooldown.
+        允许同币同类型信号升级时绕过普通重复冷却。
+        """
+
+        return self._level_rank(alert.level.value) > self._level_rank(str(last_alert.get("level") or ""))
+
+    @staticmethod
+    def _level_rank(level: str) -> int:
+        """Map alert levels to comparable urgency ranks.
+        将提醒等级映射成可比较的强度顺序。
+        """
+
+        return {"C": 1, "B": 2, "A": 3}.get(level, 0)
 
     def record_alert(self, alert: AlertSignal, sent_to_telegram: bool) -> None:
         """Persist alert and update state.

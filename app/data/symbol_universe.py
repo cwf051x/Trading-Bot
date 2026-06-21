@@ -70,6 +70,7 @@ def is_stable_pair(symbol: str) -> bool:
 def filter_symbol_universe(
     tickers: list[dict[str, Any]],
     min_quote_volume: float,
+    top_gainers_limit: int = 30,
     blacklist: list[str] | str | None = None,
     watchlist: list[str] | str | None = None,
 ) -> list[dict[str, Any]]:
@@ -79,21 +80,30 @@ def filter_symbol_universe(
 
     blacklist_set = parse_symbol_list(blacklist)
     watchlist_set = parse_symbol_list(watchlist)
-    rows: list[dict[str, Any]] = []
+    normalized_rows: list[dict[str, Any]] = []
     for ticker in tickers:
         symbol = normalize_symbol(str(ticker.get("symbol") or ""))
-        quote_volume = float(ticker.get("quote_volume") or ticker.get("quoteVolume") or 0.0)
         if not is_usdt_perpetual_symbol(symbol):
             continue
         if is_stable_pair(symbol):
             continue
         if symbol in blacklist_set:
             continue
-        if watchlist_set and symbol not in watchlist_set:
-            continue
-        if quote_volume < min_quote_volume:
-            continue
         normalized = dict(ticker)
         normalized["symbol"] = symbol
-        rows.append(normalized)
-    return sorted(rows, key=lambda item: float(item.get("percentage") or 0.0), reverse=True)
+        normalized_rows.append(normalized)
+
+    ranked_rows = sorted(normalized_rows, key=lambda item: float(item.get("percentage") or 0.0), reverse=True)
+    rank_by_symbol = {ticker["symbol"]: index + 1 for index, ticker in enumerate(ranked_rows)}
+    rows: list[dict[str, Any]] = []
+    for ticker in ranked_rows:
+        symbol = ticker["symbol"]
+        quote_volume = float(ticker.get("quote_volume") or ticker.get("quoteVolume") or 0.0)
+        rank_24h = rank_by_symbol.get(symbol)
+        is_top_gainer = rank_24h is not None and rank_24h <= top_gainers_limit
+        if quote_volume < min_quote_volume and not is_top_gainer and symbol not in watchlist_set:
+            continue
+        selected = dict(ticker)
+        selected["rank_24h"] = rank_24h
+        rows.append(selected)
+    return rows
