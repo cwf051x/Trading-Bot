@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+from threading import Lock
 import time
-from typing import Any
+from typing import Any, Callable, Iterable, TypeVar
 
 from app.alerts.profiling import CycleProfiler
 from app.data.market_snapshot import aggregate_klines, build_market_metrics, compute_timeframe_stats, pct_change
@@ -14,6 +16,9 @@ from app.data.symbol_universe import filter_symbol_universe, normalize_symbol, p
 from app.exchange.binance import BinanceFuturesClient, Kline
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 class MarketScanner:
@@ -33,6 +38,10 @@ class MarketScanner:
         self.ticker_cache: dict[str, dict[str, Any]] = {}
         self.hot_symbols: dict[str, float] = {}
         self._cache_stats: dict[str, int] = {}
+        self._cache_lock = Lock()
+        self._stats_lock = Lock()
+        self._throttle_lock = Lock()
+        self._last_fetch_started_at = 0.0
 
     def scan(self) -> list[Any]:
         """Scan the configured market universe once.
@@ -53,6 +62,7 @@ class MarketScanner:
             "oi_fetch_count": 0,
         }
         now = time.time()
+        fetch_concurrency = self._fetch_concurrency()
         forced_symbols = parse_symbol_list(getattr(self.settings, "alert_watchlist", [])) | self._open_position_symbols() | self._active_hot_symbols(now)
         with profiler.measure("fetch_24h_tickers"):
             tickers = self.client.get_24h_tickers()
@@ -66,21 +76,23 @@ class MarketScanner:
             )
             candidate_rows = self._select_candidate_rows(eligible, now=now)
             self._cache_stats["skipped_by_not_candidate"] = max(0, len(eligible) - len(candidate_rows))
-            profiler.set_meta(symbols=len(eligible), candidate_symbols_count=len(candidate_rows), skipped_by_not_candidate=self._cache_stats["skipped_by_not_candidate"])
+            profiler.set_meta(symbols=len(eligible), candidate_symbols_count=len(candidate_rows), skipped_by_not_candidate=self._cache_stats["skipped_by_not_candidate"], fetch_concurrency=fetch_concurrency)
             self._update_ticker_cache(eligible, now=now)
         self._oi_failures = []
         btc_klines = self._get_klines_safe("BTC/USDT:USDT", "15m", 2)
         btc_15m_change = pct_change(btc_klines[0].open, btc_klines[-1].close) if len(btc_klines) >= 2 else 0.0
-        fast_klines_by_symbol: dict[str, dict[str, list[Kline]]] = {}
-        for ticker in candidate_rows:
-            symbol = ticker["symbol"]
-            fast_klines_by_symbol[symbol] = self._collect_fast_klines(symbol)
+        fast_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), self._collect_fast_klines)
+        fast_klines_by_symbol = {symbol: klines for symbol, klines in fast_pairs}
         strong_symbols = self._select_strong_candidate_symbols(candidate_rows, fast_klines_by_symbol)
+        candidate_klines_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {})))
+        candidate_klines_by_symbol = {symbol: klines for symbol, klines in candidate_klines_pairs}
+        oi_pairs = self._run_limited(sorted(strong_symbols), self._get_open_interest_history_safe)
+        oi_history_by_symbol = {symbol: history for symbol, history in oi_pairs}
         metrics_rows = []
         for ticker in candidate_rows:
             symbol = ticker["symbol"]
-            klines = self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {}))
-            oi_history = self._get_open_interest_history_safe(symbol) if symbol in strong_symbols else []
+            klines = candidate_klines_by_symbol.get(symbol, {})
+            oi_history = oi_history_by_symbol.get(symbol, [])
             with profiler.measure("build_metrics"):
                 metrics = build_market_metrics(ticker=ticker, klines_by_timeframe=klines, btc_15m_change=btc_15m_change, rank_24h=ticker.get("rank_24h"), oi_history=oi_history)
             if metrics is None:
@@ -91,6 +103,48 @@ class MarketScanner:
         profiler.set_meta(metrics=len(metrics_rows), strong_candidate_symbols_count=len(strong_symbols), oi_failures=len(self._oi_failures), **self._cache_stats)
         self._log_oi_failure_summary(total_symbols=len(strong_symbols))
         return metrics_rows
+
+    def _fetch_concurrency(self) -> int:
+        """Return bounded fetch concurrency for exchange calls.
+        返回交易所请求并发上限，避免无限并发触发限流。
+        """
+
+        return max(1, int(getattr(self.settings, "alert_fetch_concurrency", 8)))
+
+    def _run_limited(self, items: Iterable[T], worker: Callable[[T], R]) -> list[tuple[T, R]]:
+        """Run independent fetch tasks with a conservative worker limit.
+        用受限线程池运行互相独立的行情请求。
+        """
+
+        item_list = list(items)
+        if not item_list:
+            return []
+        max_workers = min(self._fetch_concurrency(), len(item_list))
+        if max_workers <= 1:
+            return [(item, worker(item)) for item in item_list]
+        results: list[tuple[int, T, R]] = []
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="radar-fetch") as executor:
+            futures = {executor.submit(worker, item): (index, item) for index, item in enumerate(item_list)}
+            for future in as_completed(futures):
+                index, item = futures[future]
+                results.append((index, item, future.result()))
+        return [(item, result) for _, item, result in sorted(results, key=lambda row: row[0])]
+
+    def _throttle_fetch(self) -> None:
+        """Pace exchange request starts across worker threads.
+        控制多线程请求的启动间隔，避免并发瞬间触发交易所限流。
+        """
+
+        min_interval = max(0.0, float(getattr(self.settings, "alert_fetch_min_interval_seconds", 0.08)))
+        if min_interval <= 0:
+            return
+        with self._throttle_lock:
+            now = time.time()
+            wait_seconds = self._last_fetch_started_at + min_interval - now
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+                now = time.time()
+            self._last_fetch_started_at = now
 
     def _select_candidate_rows(self, eligible: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
         """Return rows that deserve deep K-line scanning this cycle.
@@ -132,7 +186,8 @@ class MarketScanner:
         for ticker in tickers:
             symbol = str(ticker.get("symbol") or "")
             if symbol:
-                self.ticker_cache[symbol] = {"data": dict(ticker), "updated_at": now}
+                with self._cache_lock:
+                    self.ticker_cache[symbol] = {"data": dict(ticker), "updated_at": now}
 
     def _open_position_symbols(self) -> set[str]:
         """Return open position symbols when storage is available.
@@ -245,13 +300,14 @@ class MarketScanner:
         now = time.time()
         cached = self.candle_cache.get(cache_key)
         if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
-            self._cache_stats["kline_cache_hits"] += 1
-            self._cache_stats["skipped_by_ttl"] += 1
+            self._increment_cache_stat("kline_cache_hits")
+            self._increment_cache_stat("skipped_by_ttl")
             return list(cached["data"])
-        self._cache_stats["kline_cache_misses"] += 1
+        self._increment_cache_stat("kline_cache_misses")
         data = self._get_klines_safe(symbol, timeframe, limit)
         if data:
-            self.candle_cache[cache_key] = {"data": list(data), "updated_at": now}
+            with self._cache_lock:
+                self.candle_cache[cache_key] = {"data": list(data), "updated_at": now}
         return data
 
     def _get_klines_safe(self, symbol: str, timeframe: str, limit: int) -> list[Kline]:
@@ -262,9 +318,11 @@ class MarketScanner:
         try:
             if self._profiler:
                 with self._profiler.measure(f"fetch_klines_{timeframe}"):
-                    self._cache_stats["kline_fetch_count"] += 1
+                    self._increment_cache_stat("kline_fetch_count")
+                    self._throttle_fetch()
                     return self.client.get_klines(symbol, timeframe, limit=limit)
-            self._cache_stats["kline_fetch_count"] += 1
+            self._increment_cache_stat("kline_fetch_count")
+            self._throttle_fetch()
             return self.client.get_klines(symbol, timeframe, limit=limit)
         except Exception as exc:  # pragma: no cover - network dependent
             logger.warning("Failed to fetch %s %s klines: %s", symbol, timeframe, exc)
@@ -280,18 +338,21 @@ class MarketScanner:
             ttl_seconds = int(getattr(self.settings, "alert_oi_ttl_seconds", 60))
             cached = self.oi_cache.get(symbol)
             if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
-                self._cache_stats["oi_cache_hits"] += 1
-                self._cache_stats["skipped_by_ttl"] += 1
+                self._increment_cache_stat("oi_cache_hits")
+                self._increment_cache_stat("skipped_by_ttl")
                 return list(cached["data"])
-            self._cache_stats["oi_cache_misses"] += 1
+            self._increment_cache_stat("oi_cache_misses")
             if self._profiler:
                 with self._profiler.measure("fetch_open_interest"):
-                    self._cache_stats["oi_fetch_count"] += 1
+                    self._increment_cache_stat("oi_fetch_count")
+                    self._throttle_fetch()
                     data = self.client.get_open_interest_history(symbol, period="5m", limit=30)
             else:
-                self._cache_stats["oi_fetch_count"] += 1
+                self._increment_cache_stat("oi_fetch_count")
+                self._throttle_fetch()
                 data = self.client.get_open_interest_history(symbol, period="5m", limit=30)
-            self.oi_cache[symbol] = {"data": list(data), "updated_at": now}
+            with self._cache_lock:
+                self.oi_cache[symbol] = {"data": list(data), "updated_at": now}
             return data
         except Exception as exc:  # pragma: no cover - network dependent
             self._record_oi_failure(symbol, exc)
@@ -303,8 +364,17 @@ class MarketScanner:
         """
 
         detail = f"{symbol}: {exc}"
-        self._oi_failures.append(detail)
+        with self._stats_lock:
+            self._oi_failures.append(detail)
         logger.debug("Failed to fetch %s OI history: %s", symbol, exc)
+
+    def _increment_cache_stat(self, key: str, amount: int = 1) -> None:
+        """Increment profiling counters safely across fetch worker threads.
+        在线程池请求中安全累加 profiling 计数器。
+        """
+
+        with self._stats_lock:
+            self._cache_stats[key] = self._cache_stats.get(key, 0) + amount
 
     def _log_oi_failure_summary(self, total_symbols: int) -> None:
         """Log one OI failure summary instead of flooding warnings per symbol.

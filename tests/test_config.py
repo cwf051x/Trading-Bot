@@ -72,6 +72,8 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_KLINE_SLOW_TTL_SECONDS",
         "ALERT_OI_TTL_SECONDS",
         "ALERT_HOT_SYMBOL_TTL_SECONDS",
+        "ALERT_FETCH_CONCURRENCY",
+        "ALERT_FETCH_MIN_INTERVAL_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
@@ -113,6 +115,8 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_kline_slow_ttl_seconds == 600
     assert settings.alert_oi_ttl_seconds == 60
     assert settings.alert_hot_symbol_ttl_seconds == 900
+    assert settings.alert_fetch_concurrency == 6
+    assert settings.alert_fetch_min_interval_seconds == 0.15
     assert settings.live_trading_allowed is False
 
 

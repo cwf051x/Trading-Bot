@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     alert_kline_slow_ttl_seconds: int = Field(default=600, alias="ALERT_KLINE_SLOW_TTL_SECONDS")
     alert_oi_ttl_seconds: int = Field(default=60, alias="ALERT_OI_TTL_SECONDS")
     alert_hot_symbol_ttl_seconds: int = Field(default=900, alias="ALERT_HOT_SYMBOL_TTL_SECONDS")
+    alert_fetch_concurrency: int = Field(default=6, alias="ALERT_FETCH_CONCURRENCY")
+    alert_fetch_min_interval_seconds: float = Field(default=0.15, alias="ALERT_FETCH_MIN_INTERVAL_SECONDS")
 
     @field_validator("watch_symbols", mode="before")
     @classmethod

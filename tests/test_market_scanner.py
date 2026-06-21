@@ -3,7 +3,11 @@
 """
 
 import logging
+import threading
+import time
 from collections import Counter
+
+import pytest
 
 from app.alerts.scanner import MarketScanner
 from app.config import Settings
@@ -107,3 +111,56 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
     assert scanner.last_profile.meta["kline_cache_hits"] >= 6
     assert scanner.last_profile.meta["oi_cache_hits"] == 2
     assert scanner.last_profile.meta["skipped_by_ttl"] >= 8
+
+
+class SlowCountingMarketClient(CountingMarketClient):
+    def __init__(self, ticker_count: int = 8, delay_seconds: float = 0.02) -> None:
+        super().__init__(ticker_count=ticker_count)
+        self.delay_seconds = delay_seconds
+        self.active_requests = 0
+        self.max_active_requests = 0
+        self._lock = threading.Lock()
+
+    def _track_request(self) -> None:
+        with self._lock:
+            self.active_requests += 1
+            self.max_active_requests = max(self.max_active_requests, self.active_requests)
+        try:
+            time.sleep(self.delay_seconds)
+        finally:
+            with self._lock:
+                self.active_requests -= 1
+
+    def get_klines(self, symbol: str, timeframe: str, limit: int):
+        self._track_request()
+        return super().get_klines(symbol, timeframe, limit)
+
+    def get_open_interest_history(self, symbol: str, period: str = "5m", limit: int = 30):
+        self._track_request()
+        return super().get_open_interest_history(symbol, period, limit)
+
+
+def test_scanner_fetches_market_data_with_bounded_concurrency() -> None:
+    client = SlowCountingMarketClient(ticker_count=8, delay_seconds=0.02)
+    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=3, ALERT_FETCH_CONCURRENCY=3, ALERT_FETCH_MIN_INTERVAL_SECONDS=0)
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+
+    assert client.max_active_requests > 1
+    assert client.max_active_requests <= 3
+    assert scanner.last_profile.meta["fetch_concurrency"] == 3
+
+
+def test_scanner_throttles_fetch_start_rate(monkeypatch) -> None:
+    scanner = MarketScanner(CountingMarketClient(), Settings(_env_file=None, ALERT_FETCH_MIN_INTERVAL_SECONDS=0.5))
+    times = iter([10.0, 10.1, 10.6])
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("app.alerts.scanner.time.time", lambda: next(times))
+    monkeypatch.setattr("app.alerts.scanner.time.sleep", sleeps.append)
+
+    scanner._throttle_fetch()
+    scanner._throttle_fetch()
+
+    assert sleeps == pytest.approx([0.4])
