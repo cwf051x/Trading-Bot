@@ -58,6 +58,10 @@ ALERT_TYPE_LABELS = {
     "PULLBACK_SECOND_LEG": "回调二启",
     "HIGH_RISK_EXTENSION": "高位风险延伸",
     "VOLUME_PRICE_OI_RESONANCE": "量价OI共振",
+    "HOURLY_TREND_T1": "小时趋势启动",
+    "HOURLY_TREND_T2": "小时趋势加速",
+    "HOURLY_TREND_T3": "小时回踩接多",
+    "HOURLY_TREND_T4": "小时过热风险",
 }
 
 

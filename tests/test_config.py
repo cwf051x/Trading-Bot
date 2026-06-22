@@ -85,6 +85,26 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_OI_WARM_TTL_SECONDS",
         "ALERT_OI_COLD_TTL_SECONDS",
         "ALERT_OI_MAX_REFRESH_PER_LOOP",
+        "ALERT_FUNDING_RATE_TTL_SECONDS",
+        "ALERT_RULE_HOURLY_TREND_ENABLED",
+        "ALERT_HOURLY_T1_PRICE_CHANGE_6H",
+        "ALERT_HOURLY_T1_MA7_MA25_MIN_RATIO",
+        "ALERT_HOURLY_T1_VOLUME_MULTIPLIER",
+        "ALERT_HOURLY_T1_OI_CHANGE_6H",
+        "ALERT_HOURLY_T2_PRICE_CHANGE_12H",
+        "ALERT_HOURLY_T2_BULLISH_COUNT_12",
+        "ALERT_HOURLY_T2_OI_CHANGE_12H",
+        "ALERT_HOURLY_T2_VOLUME_EXPANSION",
+        "ALERT_HOURLY_T3_PRICE_CHANGE_12H",
+        "ALERT_HOURLY_T3_OI_CHANGE_12H",
+        "ALERT_HOURLY_T3_PULLBACK_MIN",
+        "ALERT_HOURLY_T3_PULLBACK_MAX",
+        "ALERT_HOURLY_T3_OI_PULLBACK_MAX",
+        "ALERT_HOURLY_T4_PRICE_CHANGE_24H",
+        "ALERT_HOURLY_T4_MA25_DEVIATION",
+        "ALERT_HOURLY_T4_RSI6",
+        "ALERT_HOURLY_T4_RSI24",
+        "ALERT_HOURLY_T4_OI_CHANGE_24H",
     ):
         monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
@@ -139,6 +159,12 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_oi_warm_ttl_seconds == 90
     assert settings.alert_oi_cold_ttl_seconds == 600
     assert settings.alert_oi_max_refresh_per_loop == 15
+    assert settings.alert_funding_rate_ttl_seconds == 900
+    assert settings.alert_rule_hourly_trend_enabled is True
+    assert settings.alert_hourly_t1_price_change_6h == 0.08
+    assert settings.alert_hourly_t2_price_change_12h == 0.20
+    assert settings.alert_hourly_t3_pullback_min == 0.04
+    assert settings.alert_hourly_t4_ma25_deviation == 0.20
     assert settings.live_trading_allowed is False
 
 

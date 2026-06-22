@@ -3,7 +3,7 @@
 """
 
 from app.alerts.alert_rules import AlertRuleEngine
-from app.alerts.signal_models import AlertType, MarketMetrics, ResonanceStats, TimeframeStats
+from app.alerts.signal_models import AlertType, HourlyTrendStats, MarketMetrics, ResonanceStats, TimeframeStats
 from app.config import Settings
 from app.data.market_snapshot import build_market_metrics
 from app.exchange.binance import Kline
@@ -69,6 +69,52 @@ def alert_types(metrics: MarketMetrics, state: dict | None = None) -> set[AlertT
     return {result.alert_type for result in AlertRuleEngine(make_settings()).evaluate(metrics, state)}
 
 
+def make_hourly_trend(**overrides) -> HourlyTrendStats:
+    """Build hourly trend stats for rule tests.
+    构建小时级趋势规则测试指标。
+    """
+
+    stats = HourlyTrendStats(
+        ma7=1.18,
+        ma25=1.10,
+        ma99=0.95,
+        rsi6=72,
+        rsi24=66,
+        price_change_6h=0.10,
+        price_change_12h=0.22,
+        price_change_24h=0.35,
+        current_1h_volume=1800,
+        volume_avg_6h=1200,
+        volume_avg_12h=1600,
+        volume_avg_20h=1000,
+        volume_avg_24h=1100,
+        volume_avg_48h=1000,
+        volume_ratio=1.8,
+        oi_change_6h=0.10,
+        oi_change_12h=0.18,
+        oi_change_24h=0.30,
+        distance_to_ma7=0.015,
+        distance_to_ma25=0.09,
+        bullish_1h_count_12=9,
+        long_upper_wick_1h=False,
+        long_upper_wick_2h=False,
+        consecutive_red_1h=False,
+        close_above_high_12h_previous=True,
+        ma7_slope=0.01,
+        ma25_slope=0.006,
+        recent_3h_holds_ma25=True,
+        pullback_from_recent_high=0.06,
+        near_ma7_or_ma25=True,
+        rsi15m_crossed_up=True,
+        reversal_15m=True,
+        pullback_volume_safe=True,
+        oi_pullback_from_high=0.05,
+        funding_rate=0.0002,
+        ma_structure="多头排列",
+    )
+    return HourlyTrendStats(**{**stats.__dict__, **overrides})
+
+
 def test_top_gainer_momentum_rule() -> None:
     types = alert_types(make_metrics(resonance=make_resonance()))
 
@@ -132,6 +178,39 @@ def test_high_risk_extension_rule() -> None:
     types = alert_types(metrics)
 
     assert AlertType.VOLUME_PRICE_OI_RESONANCE in types
+
+
+def test_hourly_trend_t3_pullback_has_priority() -> None:
+    metrics = make_metrics(trend=make_hourly_trend())
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.HOURLY_TREND_T3
+    assert results[0].metadata["trend_level"] == "T3"
+    assert "回踩接多观察" in results[0].suggested_action
+
+
+def test_hourly_trend_t4_is_risk_only() -> None:
+    metrics = make_metrics(
+        trend=make_hourly_trend(
+            price_change_24h=0.55,
+            distance_to_ma25=0.22,
+            rsi6=88,
+            rsi24=78,
+            oi_change_24h=0.45,
+            long_upper_wick_1h=True,
+            pullback_from_recent_high=0.0,
+            near_ma7_or_ma25=False,
+            rsi15m_crossed_up=False,
+            reversal_15m=False,
+        )
+    )
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.HOURLY_TREND_T4
+    assert results[0].metadata["auto_paper"] is False
+    assert "不是做空信号" in results[0].suggested_action
 
 
 def test_btc_dump_blocks_long_bias_alerts() -> None:

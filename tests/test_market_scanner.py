@@ -44,6 +44,8 @@ class CountingMarketClient:
         self.klines_calls: Counter[tuple[str, str]] = Counter()
         self.kline_limits: list[tuple[str, str, int]] = []
         self.oi_calls: Counter[str] = Counter()
+        self.oi_period_calls: Counter[tuple[str, str]] = Counter()
+        self.funding_calls: Counter[str] = Counter()
         self.tickers = [
             {
                 "symbol": f"COIN{index}/USDT:USDT",
@@ -70,12 +72,17 @@ class CountingMarketClient:
 
     def get_open_interest_history(self, symbol: str, period: str = "5m", limit: int = 30):
         self.oi_calls[symbol] += 1
+        self.oi_period_calls[(symbol, period)] += 1
         return [OpenInterestPoint(timestamp=index * 300_000, open_interest=1000 + index) for index in range(limit)]
+
+    def get_funding_rate(self, symbol: str):
+        self.funding_calls[symbol] += 1
+        return 0.0002
 
 
 def test_scanner_fetches_deep_data_only_for_candidate_pool() -> None:
     client = CountingMarketClient(ticker_count=20)
-    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=5, ALERT_OI_TOP_N=2)
+    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=5, ALERT_OI_TOP_N=2, ALERT_RULE_HOURLY_TREND_ENABLED=False)
     scanner = MarketScanner(client, settings)
 
     rows = scanner.scan()
@@ -98,6 +105,7 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
         ALERT_KLINE_MEDIUM_TTL_SECONDS=180,
         ALERT_KLINE_SLOW_TTL_SECONDS=600,
         ALERT_OI_TTL_SECONDS=60,
+        ALERT_RULE_HOURLY_TREND_ENABLED=False,
     )
     scanner = MarketScanner(client, settings)
 
@@ -117,7 +125,7 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
 
 def test_scanner_limits_oi_refreshes_per_loop() -> None:
     client = CountingMarketClient(ticker_count=8)
-    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=6, ALERT_OI_MAX_REFRESH_PER_LOOP=2)
+    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=6, ALERT_OI_MAX_REFRESH_PER_LOOP=2, ALERT_RULE_HOURLY_TREND_ENABLED=False)
     scanner = MarketScanner(client, settings)
 
     scanner.scan()
@@ -138,6 +146,7 @@ def test_scanner_does_not_refetch_tiered_oi_cache_when_ttl_is_valid() -> None:
         ALERT_OI_HOT_TTL_SECONDS=300,
         ALERT_OI_WARM_TTL_SECONDS=300,
         ALERT_OI_COLD_TTL_SECONDS=300,
+        ALERT_RULE_HOURLY_TREND_ENABLED=False,
     )
     scanner = MarketScanner(client, settings)
 
@@ -148,6 +157,29 @@ def test_scanner_does_not_refetch_tiered_oi_cache_when_ttl_is_valid() -> None:
     assert max(client.oi_calls.values()) == 1
     assert scanner.last_profile.meta["oi_cache_hits"] == 2
     assert scanner.last_profile.meta["oi_skipped_by_ttl"] == 2
+
+
+def test_scanner_caches_oi_by_symbol_and_period() -> None:
+    client = CountingMarketClient(ticker_count=2)
+    scanner = MarketScanner(client, Settings(_env_file=None, ALERT_OI_TTL_SECONDS=300))
+
+    scanner._get_open_interest_history_safe("COIN0/USDT:USDT", period="5m")
+    scanner._get_open_interest_history_safe("COIN0/USDT:USDT", period="1h")
+    scanner._get_open_interest_history_safe("COIN0/USDT:USDT", period="5m")
+    scanner._get_open_interest_history_safe("COIN0/USDT:USDT", period="1h")
+
+    assert client.oi_period_calls[("COIN0/USDT:USDT", "5m")] == 1
+    assert client.oi_period_calls[("COIN0/USDT:USDT", "1h")] == 1
+
+
+def test_scanner_reuses_funding_rate_cache_within_ttl() -> None:
+    client = CountingMarketClient(ticker_count=2)
+    scanner = MarketScanner(client, Settings(_env_file=None, ALERT_FUNDING_RATE_TTL_SECONDS=600))
+
+    assert scanner._get_funding_rate_safe("COIN0/USDT:USDT") == 0.0002
+    assert scanner._get_funding_rate_safe("COIN0/USDT:USDT") == 0.0002
+
+    assert client.funding_calls["COIN0/USDT:USDT"] == 1
 
 
 class SlowCountingMarketClient(CountingMarketClient):

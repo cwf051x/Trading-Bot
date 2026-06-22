@@ -6,10 +6,13 @@ services:
         PYTHON_VERSION: "3.11"
     env_file:
       - .env
+    environment:
+      TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
       - ./backtests:/app/backtests
-    command: ["python", "-m", "app.main", "--mode", "paper"]
+      - ./logs:/app/logs
+    command: ["sh", "-c", "python -u -m app.main --mode paper 2>&1 | tee -a /app/logs/trading_bot.log"]
     restart: unless-stopped
 
   admin-web:
@@ -21,9 +24,12 @@ services:
       - ./.env:/app/.env
       - ./data:/app/data
       - ./backtests:/app/backtests
+      - ./logs:/app/logs
+    environment:
+      TZ: Asia/Shanghai
     ports:
       - "127.0.0.1:${WEB_PORT:-8000}:8000"
-    command: ["uvicorn", "app.web.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["sh", "-c", "uvicorn app.web.server:app --host 0.0.0.0 --port 8000 2>&1 | tee -a /app/logs/admin_web.log"]
     restart: unless-stopped
 
   alert-radar:
@@ -33,7 +39,10 @@ services:
         PYTHON_VERSION: "3.11"
     env_file:
       - .env
+    environment:
+      TZ: Asia/Shanghai
     volumes:
       - ./data:/app/data
-    command: ["python", "scripts/run_alert_radar_loop.py"]
+      - ./logs:/app/logs
+    command: ["sh", "-c", "python -u scripts/run_alert_radar_loop.py 2>&1 | tee -a /app/logs/alert_radar.log"]
     restart: unless-stopped

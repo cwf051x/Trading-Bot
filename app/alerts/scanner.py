@@ -34,7 +34,8 @@ class MarketScanner:
         self._profiler: CycleProfiler | None = None
         self.last_profile = CycleProfiler()
         self.candle_cache: dict[tuple[str, str], dict[str, Any]] = {}
-        self.oi_cache: dict[str, dict[str, Any]] = {}
+        self.oi_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self.funding_cache: dict[str, dict[str, Any]] = {}
         self.ticker_cache: dict[str, dict[str, Any]] = {}
         self.hot_symbols: dict[str, float] = {}
         self._cache_stats: dict[str, int] = {}
@@ -76,6 +77,9 @@ class MarketScanner:
             "oi_refresh_skipped_by_limit": 0,
             "oi_skipped_by_ttl": 0,
             "oi_stale_used_count": 0,
+            "funding_cache_hits": 0,
+            "funding_cache_misses": 0,
+            "funding_fetch_count": 0,
         }
         now = time.time()
         fetch_concurrency = self._fetch_concurrency()
@@ -103,16 +107,32 @@ class MarketScanner:
         candidate_klines_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {})))
         candidate_klines_by_symbol = {symbol: klines for symbol, klines in candidate_klines_pairs}
         oi_refresh_symbols = self._select_oi_refresh_symbols(strong_symbols, fast_klines_by_symbol, now=now)
-        oi_history_by_symbol = self._cached_oi_histories(strong_symbols)
-        oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, force_refresh=True))
+        hourly_trend_enabled = bool(getattr(self.settings, "alert_rule_hourly_trend_enabled", True))
+        oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="5m")
+        hourly_oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="1h") if hourly_trend_enabled else {}
+        oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="5m", force_refresh=True))
+        hourly_oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="1h", force_refresh=True)) if hourly_trend_enabled else []
+        funding_pairs = self._run_limited(sorted(strong_symbols), self._get_funding_rate_safe) if hourly_trend_enabled else []
         oi_history_by_symbol.update({symbol: history for symbol, history in oi_pairs})
+        hourly_oi_history_by_symbol.update({symbol: history for symbol, history in hourly_oi_pairs})
+        funding_rate_by_symbol = {symbol: funding_rate for symbol, funding_rate in funding_pairs}
         metrics_rows = []
         for ticker in candidate_rows:
             symbol = ticker["symbol"]
             klines = candidate_klines_by_symbol.get(symbol, {})
             oi_history = oi_history_by_symbol.get(symbol, [])
+            trend_oi_history = hourly_oi_history_by_symbol.get(symbol, [])
+            funding_rate = funding_rate_by_symbol.get(symbol)
             with profiler.measure("build_metrics"):
-                metrics = build_market_metrics(ticker=ticker, klines_by_timeframe=klines, btc_15m_change=btc_15m_change, rank_24h=ticker.get("rank_24h"), oi_history=oi_history)
+                metrics = build_market_metrics(
+                    ticker=ticker,
+                    klines_by_timeframe=klines,
+                    btc_15m_change=btc_15m_change,
+                    rank_24h=ticker.get("rank_24h"),
+                    funding_rate=funding_rate,
+                    oi_history=oi_history,
+                    trend_oi_history=trend_oi_history,
+                )
             if metrics is None:
                 logger.info("Skipping %s because market data is insufficient", symbol)
                 continue
@@ -313,7 +333,7 @@ class MarketScanner:
         for symbol in symbols:
             tier, score = self._oi_refresh_tier(symbol, fast_klines_by_symbol.get(symbol, {}))
             self._increment_cache_stat(f"oi_{tier}_count")
-            cached = self.oi_cache.get(symbol)
+            cached = self.oi_cache.get((symbol, "5m"))
             ttl = self._oi_ttl_seconds(tier)
             if cached and ttl > 0 and now - float(cached["updated_at"]) < ttl:
                 self._increment_cache_stat("oi_cache_hits")
@@ -328,7 +348,7 @@ class MarketScanner:
         if skipped:
             self._increment_cache_stat("oi_refresh_skipped_by_limit", skipped)
             for _, symbol in sorted(refresh_candidates, reverse=True)[max_refresh:]:
-                if symbol in self.oi_cache:
+                if (symbol, "5m") in self.oi_cache:
                     self._increment_cache_stat("oi_stale_used_count")
         return selected
 
@@ -359,14 +379,14 @@ class MarketScanner:
             return int(getattr(self.settings, "alert_oi_warm_ttl_seconds", 90))
         return int(getattr(self.settings, "alert_oi_cold_ttl_seconds", 600))
 
-    def _cached_oi_histories(self, symbols: set[str]) -> dict[str, list[Any]]:
+    def _cached_oi_histories(self, symbols: set[str], period: str = "5m") -> dict[str, list[Any]]:
         """Return cached OI histories for symbols that are not refreshed.
         未刷新 OI 的币种优先沿用缓存，避免信号输入直接断档。
         """
 
         histories: dict[str, list[Any]] = {}
         for symbol in symbols:
-            cached = self.oi_cache.get(symbol)
+            cached = self.oi_cache.get((symbol, period))
             if cached:
                 histories[symbol] = list(cached["data"])
         return histories
@@ -520,7 +540,7 @@ class MarketScanner:
             logger.warning("Failed to fetch %s %s klines: %s", symbol, timeframe, exc)
             return []
 
-    def _get_open_interest_history_safe(self, symbol: str, force_refresh: bool = False) -> list[Any]:
+    def _get_open_interest_history_safe(self, symbol: str, period: str = "5m", force_refresh: bool = False, limit: int = 30) -> list[Any]:
         """Fetch OI history without crashing the full scan.
         获取 OI 历史，单个失败不导致整轮扫描崩溃。
         """
@@ -528,7 +548,8 @@ class MarketScanner:
         try:
             now = time.time()
             ttl_seconds = int(getattr(self.settings, "alert_oi_ttl_seconds", 60))
-            cached = self.oi_cache.get(symbol)
+            cache_key = (symbol, period)
+            cached = self.oi_cache.get(cache_key)
             if not force_refresh and cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
                 self._increment_cache_stat("oi_cache_hits")
                 self._increment_cache_stat("skipped_by_ttl")
@@ -538,18 +559,49 @@ class MarketScanner:
                 with self._profiler.measure("fetch_open_interest"):
                     self._increment_cache_stat("oi_fetch_count")
                     self._throttle_fetch()
-                    data = self.client.get_open_interest_history(symbol, period="5m", limit=30)
+                    data = self.client.get_open_interest_history(symbol, period=period, limit=limit)
             else:
                 self._increment_cache_stat("oi_fetch_count")
                 self._throttle_fetch()
-                data = self.client.get_open_interest_history(symbol, period="5m", limit=30)
+                data = self.client.get_open_interest_history(symbol, period=period, limit=limit)
             with self._cache_lock:
-                self.oi_cache[symbol] = {"data": list(data), "updated_at": now}
+                self.oi_cache[cache_key] = {"data": list(data), "updated_at": now}
             return data
         except Exception as exc:  # pragma: no cover - network dependent
             self._handle_rate_limit_error(exc)
             self._record_oi_failure(symbol, exc)
             return []
+
+    def _get_funding_rate_safe(self, symbol: str) -> float | None:
+        """Fetch funding rate with a TTL cache.
+        带 TTL 缓存获取资金费率，避免每轮重复请求。
+        """
+
+        try:
+            now = time.time()
+            ttl_seconds = int(getattr(self.settings, "alert_funding_rate_ttl_seconds", 900))
+            cached = self.funding_cache.get(symbol)
+            if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
+                self._increment_cache_stat("funding_cache_hits")
+                self._increment_cache_stat("skipped_by_ttl")
+                return cached["data"]
+            self._increment_cache_stat("funding_cache_misses")
+            if self._profiler:
+                with self._profiler.measure("fetch_funding_rate"):
+                    self._increment_cache_stat("funding_fetch_count")
+                    self._throttle_fetch()
+                    data = self.client.get_funding_rate(symbol)
+            else:
+                self._increment_cache_stat("funding_fetch_count")
+                self._throttle_fetch()
+                data = self.client.get_funding_rate(symbol)
+            with self._cache_lock:
+                self.funding_cache[symbol] = {"data": data, "updated_at": now}
+            return data
+        except Exception as exc:  # pragma: no cover - network dependent
+            self._handle_rate_limit_error(exc)
+            logger.debug("Failed to fetch %s funding rate: %s", symbol, exc)
+            return None
 
     def _handle_rate_limit_error(self, exc: Exception) -> None:
         """Enter temporary backoff when Binance reports rate limiting.

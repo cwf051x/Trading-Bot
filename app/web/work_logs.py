@@ -59,7 +59,10 @@ def load_work_log_view(
     safe_limit = max(20, min(limit, 1000))
     log_files = discover_log_files(base_dir / "logs")
     entries = parse_log_lines(read_log_tail_lines(log_files, max_lines_per_file=1000))
-    filtered = filter_entries(entries, source=source, level=level, query=query)[:safe_limit]
+    filtered = filter_entries(entries, source=source, level=level, query=query)
+    if source == "all" and not query.strip():
+        filtered = [entry for entry in filtered if not is_routine_noise(entry)]
+    filtered = filtered[:safe_limit]
     return {
         "entries": filtered,
         "cards": build_status_cards(entries),
@@ -159,7 +162,7 @@ def classify_source(logger: str, message: str) -> str:
         return "telegram"
     if "paper order" in text or "created paper order" in text:
         return "paper_order"
-    if "paper cycle" in text:
+    if "paper cycle" in text or "paper account equity" in text or "risk ignored non-actionable signal" in text or re.search(r"\bsignal\s+\S+\s+none:", text):
         return "paper_cycle"
     if "binance" in text or "open interest" in text or "fetch" in text:
         return "exchange"
@@ -187,6 +190,17 @@ def classify_status(level: str, message: str) -> str:
     if "sent" in lowered:
         return "sent"
     return "ok"
+
+
+def is_routine_noise(entry: LogEntry) -> bool:
+    """Return whether a log line is a high-frequency non-actionable paper trace.
+    默认视图隐藏逐币无信号/忽略日志，保留页面对异常和关键事件的扫描价值。
+    """
+
+    if entry.source != "paper_cycle" or entry.level not in {"INFO", "DEBUG"}:
+        return False
+    lowered = entry.message.lower()
+    return "risk ignored non-actionable signal" in lowered or bool(re.search(r"\bsignal\s+\S+\s+none:", lowered))
 
 
 def filter_entries(entries: list[LogEntry], *, source: str, level: str, query: str) -> list[LogEntry]:

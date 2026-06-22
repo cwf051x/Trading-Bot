@@ -7,7 +7,7 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from app.alerts.signal_models import MarketMetrics, ResonanceStats, TimeframeStats
+from app.alerts.signal_models import HourlyTrendStats, MarketMetrics, ResonanceStats, TimeframeStats
 from app.exchange.binance import Kline, OpenInterestPoint
 
 
@@ -94,13 +94,23 @@ def moving_average(values: list[float], window: int) -> float:
 
 
 def oi_change(history: list[OpenInterestPoint], intervals: int) -> float:
-    """Return OI change over a number of 5m intervals.
-    返回指定 5m 间隔的持仓量变化。
+    """Return OI change over a number of history intervals.
+    返回指定历史间隔数的持仓量变化。
     """
 
     if len(history) <= intervals:
         return 0.0
     return pct_change(history[-(intervals + 1)].open_interest, history[-1].open_interest)
+
+
+def previous_rsi(klines: list[Kline], period: int) -> float | None:
+    """Return RSI for the previous completed candle window.
+    返回上一根完成 K 线窗口的 RSI，用于判断上穿。
+    """
+
+    if len(klines) <= period + 1:
+        return None
+    return compute_rsi(klines[:-1], period)
 
 
 def build_resonance_stats(klines_5m: list[Kline], oi_history: list[OpenInterestPoint]) -> ResonanceStats | None:
@@ -139,6 +149,114 @@ def build_resonance_stats(klines_5m: list[Kline], oi_history: list[OpenInterestP
         long_upper_wick=upper_wick > max(body * 1.5, current.close * 0.004) and volume_ratio > 2,
         consecutive_red_5m=len(recent_six) >= 2 and recent_six[-1].close < recent_six[-1].open and recent_six[-2].close < recent_six[-2].open,
     )
+
+
+def build_hourly_trend_stats(
+    klines_1h: list[Kline],
+    klines_15m: list[Kline],
+    oi_history_1h: list[OpenInterestPoint],
+    funding_rate: float | None = None,
+) -> HourlyTrendStats | None:
+    """Build hour-level trend metrics from 1h candles, 15m candles, and 1h OI.
+    根据 1h K 线、15m K 线和 1h OI 构建小时级趋势指标。
+    """
+
+    if len(klines_1h) < 100 or len(klines_15m) < 30 or len(oi_history_1h) < 25:
+        return None
+    current = klines_1h[-1]
+    closes = [item.close for item in klines_1h]
+    volumes = [item.volume for item in klines_1h]
+    ma7 = moving_average(closes, 7)
+    ma25 = moving_average(closes, 25)
+    ma99 = moving_average(closes, 99)
+    previous_ma7 = moving_average(closes[:-1], 7)
+    previous_ma25 = moving_average(closes[:-1], 25)
+    volume_avg_6h = moving_average(volumes, 6)
+    volume_avg_12h = moving_average(volumes, 12)
+    volume_avg_20h = moving_average(volumes, 20)
+    volume_avg_24h = moving_average(volumes, 24)
+    volume_avg_48h = moving_average(volumes, 48)
+    recent_12h_previous = klines_1h[-13:-1]
+    high_12h_previous = max(item.high for item in recent_12h_previous) if recent_12h_previous else current.high
+    recent_24h = klines_1h[-24:]
+    recent_high = max(item.high for item in recent_24h) if recent_24h else current.high
+    recent_15m_base = klines_15m[-21:-1]
+    volume_15m_avg20 = mean(item.volume for item in recent_15m_base) if recent_15m_base else 0.0
+    pullback_15m = klines_15m[-8:]
+    rsi15m = compute_rsi(klines_15m, 6)
+    prior_rsi15m = previous_rsi(klines_15m, 6)
+    current_15m = klines_15m[-1]
+    previous_15m = klines_15m[-2]
+    latest_oi = oi_history_1h[-1].open_interest
+    max_oi = max(item.open_interest for item in oi_history_1h)
+    ma_structure = "多头排列" if ma7 > ma25 > ma99 else "偏多" if current.close > ma25 else "震荡"
+    return HourlyTrendStats(
+        ma7=ma7,
+        ma25=ma25,
+        ma99=ma99,
+        rsi6=compute_rsi(klines_1h, 6),
+        rsi24=compute_rsi(klines_1h, 24),
+        price_change_6h=pct_change(klines_1h[-7].close, current.close),
+        price_change_12h=pct_change(klines_1h[-13].close, current.close),
+        price_change_24h=pct_change(klines_1h[-25].close, current.close),
+        current_1h_volume=current.volume,
+        volume_avg_6h=volume_avg_6h,
+        volume_avg_12h=volume_avg_12h,
+        volume_avg_20h=volume_avg_20h,
+        volume_avg_24h=volume_avg_24h,
+        volume_avg_48h=volume_avg_48h,
+        volume_ratio=current.volume / volume_avg_20h if volume_avg_20h else 0.0,
+        oi_change_6h=oi_change(oi_history_1h, 6),
+        oi_change_12h=oi_change(oi_history_1h, 12),
+        oi_change_24h=oi_change(oi_history_1h, 24),
+        distance_to_ma7=(current.close / ma7 - 1) if ma7 else 0.0,
+        distance_to_ma25=(current.close / ma25 - 1) if ma25 else 0.0,
+        bullish_1h_count_12=sum(1 for item in klines_1h[-12:] if item.close > item.open),
+        long_upper_wick_1h=is_long_upper_wick(current, volume_avg_20h),
+        long_upper_wick_2h=any(is_long_upper_wick(item, volume_avg_20h) for item in klines_1h[-2:]),
+        consecutive_red_1h=len(klines_1h) >= 2 and klines_1h[-1].close < klines_1h[-1].open and klines_1h[-2].close < klines_1h[-2].open,
+        close_above_high_12h_previous=current.close > high_12h_previous,
+        ma7_slope=ma7 - previous_ma7 if previous_ma7 else 0.0,
+        ma25_slope=ma25 - previous_ma25 if previous_ma25 else 0.0,
+        recent_3h_holds_ma25=ma25 > 0 and all(item.low >= ma25 * 0.995 for item in klines_1h[-3:]),
+        pullback_from_recent_high=(recent_high - current.close) / recent_high if recent_high and recent_high > current.close else 0.0,
+        near_ma7_or_ma25=near_any_ma(current.close, [ma7, ma25], max_distance=0.02),
+        rsi15m_crossed_up=rsi_crossed_up(prior_rsi15m, rsi15m),
+        reversal_15m=current_15m.close > current_15m.open and current_15m.close > previous_15m.close,
+        pullback_volume_safe=not any(volume_15m_avg20 and item.volume > volume_15m_avg20 * 2.5 for item in pullback_15m),
+        oi_pullback_from_high=(max_oi - latest_oi) / max_oi if max_oi else 0.0,
+        funding_rate=funding_rate,
+        ma_structure=ma_structure,
+    )
+
+
+def is_long_upper_wick(kline: Kline, average_volume: float) -> bool:
+    """Return whether a candle has a meaningful high-volume upper wick.
+    判断 K 线是否出现带量长上影。
+    """
+
+    upper_wick = kline.high - max(kline.open, kline.close)
+    body = abs(kline.close - kline.open)
+    volume_ok = average_volume > 0 and kline.volume > average_volume * 1.5
+    return volume_ok and upper_wick > max(body * 1.5, kline.close * 0.004)
+
+
+def near_any_ma(price: float, averages: list[float], max_distance: float) -> bool:
+    """Return whether price is close enough to any moving average.
+    判断价格是否足够靠近任一均线。
+    """
+
+    return any(average > 0 and abs(price / average - 1) <= max_distance for average in averages)
+
+
+def rsi_crossed_up(previous: float | None, current: float | None) -> bool:
+    """Return whether RSI6 crossed back above a watched low threshold.
+    判断 RSI6 是否从低位重新上穿 30 或 50。
+    """
+
+    if previous is None or current is None:
+        return False
+    return (previous < 30 <= current) or (previous < 50 <= current)
 
 
 def compute_timeframe_stats(klines: list[Kline], breakout_window: int = 20, volume_window: int = 20, ma_window: int = 20) -> TimeframeStats:
@@ -195,6 +313,7 @@ def build_market_metrics(
     funding_rate: float | None = None,
     open_interest: float | None = None,
     oi_history: list[OpenInterestPoint] | None = None,
+    trend_oi_history: list[OpenInterestPoint] | None = None,
 ) -> MarketMetrics | None:
     """Build derived metrics for one symbol, returning None when data is insufficient.
     为单个交易对构建派生指标；数据不足时返回 None。
@@ -224,5 +343,6 @@ def build_market_metrics(
         funding_rate=funding_rate,
         open_interest=open_interest,
         resonance=build_resonance_stats(klines_by_timeframe["5m"], oi_history or []),
+        trend=build_hourly_trend_stats(klines_by_timeframe["1h"], klines_by_timeframe["15m"], trend_oi_history or [], funding_rate=funding_rate),
         raw={"ticker": ticker},
     )

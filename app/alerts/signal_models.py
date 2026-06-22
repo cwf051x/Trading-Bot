@@ -21,6 +21,10 @@ class AlertType(str, Enum):
     PULLBACK_SECOND_LEG = "PULLBACK_SECOND_LEG"
     HIGH_RISK_EXTENSION = "HIGH_RISK_EXTENSION"
     VOLUME_PRICE_OI_RESONANCE = "VOLUME_PRICE_OI_RESONANCE"
+    HOURLY_TREND_T1 = "HOURLY_TREND_T1"
+    HOURLY_TREND_T2 = "HOURLY_TREND_T2"
+    HOURLY_TREND_T3 = "HOURLY_TREND_T3"
+    HOURLY_TREND_T4 = "HOURLY_TREND_T4"
 
 
 class AlertLevel(str, Enum):
@@ -82,6 +86,50 @@ class ResonanceStats:
 
 
 @dataclass(frozen=True)
+class HourlyTrendStats:
+    """Derived fields for hour-level one-way trend radar.
+    小时级单边趋势雷达使用的派生字段。
+    """
+
+    ma7: float = 0.0
+    ma25: float = 0.0
+    ma99: float = 0.0
+    rsi6: float | None = None
+    rsi24: float | None = None
+    price_change_6h: float = 0.0
+    price_change_12h: float = 0.0
+    price_change_24h: float = 0.0
+    current_1h_volume: float = 0.0
+    volume_avg_6h: float = 0.0
+    volume_avg_12h: float = 0.0
+    volume_avg_20h: float = 0.0
+    volume_avg_24h: float = 0.0
+    volume_avg_48h: float = 0.0
+    volume_ratio: float = 0.0
+    oi_change_6h: float = 0.0
+    oi_change_12h: float = 0.0
+    oi_change_24h: float = 0.0
+    distance_to_ma7: float = 0.0
+    distance_to_ma25: float = 0.0
+    bullish_1h_count_12: int = 0
+    long_upper_wick_1h: bool = False
+    long_upper_wick_2h: bool = False
+    consecutive_red_1h: bool = False
+    close_above_high_12h_previous: bool = False
+    ma7_slope: float = 0.0
+    ma25_slope: float = 0.0
+    recent_3h_holds_ma25: bool = False
+    pullback_from_recent_high: float = 0.0
+    near_ma7_or_ma25: bool = False
+    rsi15m_crossed_up: bool = False
+    reversal_15m: bool = False
+    pullback_volume_safe: bool = False
+    oi_pullback_from_high: float = 0.0
+    funding_rate: float | None = None
+    ma_structure: str = ""
+
+
+@dataclass(frozen=True)
 class MarketMetrics:
     """Derived market metrics consumed by rules and scoring.
     供规则和评分使用的行情派生指标。
@@ -103,6 +151,7 @@ class MarketMetrics:
     funding_rate: float | None = None
     open_interest: float | None = None
     resonance: ResonanceStats | None = None
+    trend: HourlyTrendStats | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

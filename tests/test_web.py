@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.web.server as web_server
 from app.web.env_editor import update_env_values
 from app.web.server import create_app
+from app.web.work_logs import classify_source, load_work_log_view
 from app.storage.sqlite import SQLiteStorage
 
 
@@ -149,6 +150,30 @@ def test_logs_page_renders_local_work_log(monkeypatch, tmp_path: Path) -> None:
     assert "Radar Loop" in response.text
     assert "Alert radar cycle finished with 0 alerts" in response.text
     assert 'href="/logs"' in response.text
+
+
+def test_logs_page_hides_noisy_paper_routine_by_default(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "trading_bot.log").write_text(
+        "\n".join(
+            [
+                "2026-06-22 10:08:07,100 INFO __main__ Signal BTC/USDT:USDT none: breakout or volume condition not met",
+                "2026-06-22 10:08:07,200 INFO __main__ Risk ignored non-actionable signal BTC/USDT:USDT: signal is not actionable",
+                "2026-06-22 10:08:07,300 INFO __main__ Paper account equity=1019.90 available=719.90 used_margin=300.00 realized_pnl=19.47 unrealized_pnl=0.43 open_positions=3",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    default_view = load_work_log_view(tmp_path, limit=20)
+    paper_view = load_work_log_view(tmp_path, source="paper_cycle", limit=20)
+
+    assert [entry.message for entry in default_view["entries"]] == [
+        "Paper account equity=1019.90 available=719.90 used_margin=300.00 realized_pnl=19.47 unrealized_pnl=0.43 open_positions=3"
+    ]
+    assert len(paper_view["entries"]) == 3
+    assert classify_source("__main__", "Paper account equity=1019.90 available=719.90") == "paper_cycle"
 
 
 def test_alert_display_helpers_use_compact_chinese_text() -> None:

@@ -105,6 +105,11 @@ class EntryRules:
         return [AlertRuleResult(AlertType.SHORT_TERM_SURGE, 80, ["surge / 放量异动"], "突破追踪")]
 
 
+class TrendRiskRules:
+    def evaluate(self, metrics: MarketMetrics, state: dict | None = None) -> list[AlertRuleResult]:
+        return [AlertRuleResult(AlertType.HOURLY_TREND_T4, 90, ["risk / 风险"], "禁止追高", metadata={"auto_paper": False})]
+
+
 def test_radar_creates_paper_order_for_actionable_alert(tmp_path) -> None:
     settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000)
     storage = SQLiteStorage(tmp_path / "radar.sqlite")
@@ -126,6 +131,20 @@ def test_radar_creates_paper_order_for_actionable_alert(tmp_path) -> None:
     assert orders[0]["take_profit"] == 1.04
     assert orders[0]["quantity"] == 1000.0
     assert "alert SHORT_TERM_SURGE" in orders[0]["reason"]
+
+
+def test_radar_does_not_create_paper_order_for_risk_only_trend_alert(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+    risk = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings, paper=paper, risk_manager=risk)
+    radar.rules = TrendRiskRules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert storage.get_orders() == []
 
 
 def test_storage_cooldown_allows_level_upgrade(tmp_path) -> None:

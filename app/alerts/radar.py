@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 ALERT_NOTIFICATION_PRIORITY = {
     AlertType.HIGH_RISK_EXTENSION: 100,
+    AlertType.HOURLY_TREND_T4: 99,
+    AlertType.HOURLY_TREND_T3: 97,
+    AlertType.HOURLY_TREND_T2: 94,
+    AlertType.HOURLY_TREND_T1: 75,
     AlertType.VOLUME_PRICE_OI_RESONANCE: 98,
     AlertType.PULLBACK_SECOND_LEG: 95,
     AlertType.MULTI_TIMEFRAME_BREAKOUT: 90,
@@ -39,6 +43,8 @@ AUTO_PAPER_ENTRY_TYPES = {
     AlertType.MULTI_TIMEFRAME_BREAKOUT,
     AlertType.PULLBACK_SECOND_LEG,
     AlertType.VOLUME_PRICE_OI_RESONANCE,
+    AlertType.HOURLY_TREND_T2,
+    AlertType.HOURLY_TREND_T3,
 }
 
 
@@ -152,6 +158,9 @@ class MarketAlertRadar:
         if alert.alert_type not in AUTO_PAPER_ENTRY_TYPES:
             logger.info("Alert %s %s does not create paper order because it is not an entry type", alert.symbol, alert.alert_type.value)
             return
+        if alert.raw.get("metadata", {}).get("auto_paper") is False:
+            logger.info("Alert %s %s does not create paper order because metadata marks it risk-only", alert.symbol, alert.alert_type.value)
+            return
         if alert.alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE and alert.raw.get("metadata", {}).get("resonance_level") != "L2":
             logger.info("Alert %s %s does not create paper order because resonance level is not L2", alert.symbol, alert.alert_type.value)
             return
@@ -238,6 +247,9 @@ class MarketAlertRadar:
             volume_ratio = metrics.resonance.volume_ratio
             price_change_15m = metrics.resonance.price_change_15m
             price_change_1h = metrics.resonance.price_change_60m
+        if alert_type in {AlertType.HOURLY_TREND_T1, AlertType.HOURLY_TREND_T2, AlertType.HOURLY_TREND_T3, AlertType.HOURLY_TREND_T4} and metrics.trend is not None:
+            volume_ratio = metrics.trend.volume_ratio
+            price_change_1h = metrics.stats_1h.change
         return AlertSignal(
             timestamp=int(time.time() * 1000),
             symbol=metrics.symbol,

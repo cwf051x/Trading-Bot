@@ -15,6 +15,10 @@ ALERT_TYPE_TITLES = {
     AlertType.PULLBACK_SECOND_LEG: "回调二启 / Pullback Second Leg",
     AlertType.HIGH_RISK_EXTENSION: "高位风险 / High-Risk Extension",
     AlertType.VOLUME_PRICE_OI_RESONANCE: "量价OI共振拉升 / Volume Price OI Resonance",
+    AlertType.HOURLY_TREND_T1: "小时趋势启动 / Hourly Trend T1",
+    AlertType.HOURLY_TREND_T2: "小时趋势加速 / Hourly Trend T2",
+    AlertType.HOURLY_TREND_T3: "小时回踩接多观察 / Hourly Trend T3",
+    AlertType.HOURLY_TREND_T4: "小时高位过热风险 / Hourly Trend T4",
 }
 
 
