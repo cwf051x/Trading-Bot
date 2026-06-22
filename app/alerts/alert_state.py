@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -53,15 +54,21 @@ class AlertStateManager:
             return False
         if alert.level == AlertLevel.C and not self.settings.alert_send_c_level:
             return False
+        if alert.raw.get("metadata", {}).get("send_to_telegram") is False:
+            return False
+        if alert.raw.get("metadata", {}).get("bypass_cooldown"):
+            return True
         last_alert = self.storage.get_last_market_alert(alert.symbol, alert.alert_type.value, sent_only=True)
         if not last_alert:
             return True
         if self._is_level_upgrade(last_alert, alert):
             return True
+        if self._is_new_range_breakout(last_alert, alert):
+            return True
         last_alert_at = int(last_alert.get("timestamp") or 0)
         now_ms = now_ms or alert.timestamp or int(time.time() * 1000)
         elapsed_seconds = max(0, (now_ms - last_alert_at) / 1000)
-        return elapsed_seconds >= self.cooldown_seconds(alert.level)
+        return elapsed_seconds >= self._alert_cooldown_seconds(alert)
 
     def should_record(self, alert: AlertSignal, now_ms: int | None = None) -> bool:
         """Return whether this alert should be persisted now.
@@ -70,15 +77,44 @@ class AlertStateManager:
 
         if alert.level == AlertLevel.IGNORE:
             return False
+        if alert.raw.get("metadata", {}).get("bypass_cooldown"):
+            return True
         last_alert = self.storage.get_last_market_alert(alert.symbol, alert.alert_type.value, sent_only=False)
         if not last_alert:
             return True
         if self._is_level_upgrade(last_alert, alert):
             return True
+        if self._is_new_range_breakout(last_alert, alert):
+            return True
         last_alert_at = int(last_alert.get("timestamp") or 0)
         now_ms = now_ms or alert.timestamp or int(time.time() * 1000)
         elapsed_seconds = max(0, (now_ms - last_alert_at) / 1000)
-        return elapsed_seconds >= self.cooldown_seconds(alert.level)
+        return elapsed_seconds >= self._alert_cooldown_seconds(alert)
+
+    def _alert_cooldown_seconds(self, alert: AlertSignal) -> int:
+        """Return metadata-specific cooldown when a rule provides one.
+        规则提供自定义冷却时间时优先使用该值。
+        """
+
+        configured = alert.raw.get("metadata", {}).get("cooldown_seconds")
+        if configured is not None:
+            return int(configured)
+        return self.cooldown_seconds(alert.level)
+
+    def _is_new_range_breakout(self, last_alert: dict[str, Any], alert: AlertSignal) -> bool:
+        """Allow P3 to alert again when it breaks a new range high.
+        P3 突破新平台高点时允许绕过普通冷却。
+        """
+
+        current_key = alert.raw.get("metadata", {}).get("range_breakout_key")
+        if current_key is None:
+            return False
+        try:
+            last_raw = json.loads(str(last_alert.get("raw_json") or "{}"))
+        except json.JSONDecodeError:
+            return False
+        last_key = (last_raw.get("metadata") or {}).get("range_breakout_key")
+        return last_key is not None and current_key != last_key
 
     def _is_level_upgrade(self, last_alert: dict[str, Any], alert: AlertSignal) -> bool:
         """Allow urgent upgraded signals to bypass the normal repeat cooldown.
@@ -169,6 +205,14 @@ class AlertStateManager:
         """
 
         existing_name = (existing_state or {}).get("state")
+        if alert_type == AlertType.PUMP_PULLBACK_P1:
+            return "pump_pullback_p1"
+        if alert_type == AlertType.PUMP_PULLBACK_P2:
+            return "pump_pullback_p2"
+        if alert_type == AlertType.PUMP_PULLBACK_P3:
+            return "pump_pullback_p3"
+        if alert_type == AlertType.PUMP_PULLBACK_P4:
+            return "pump_pullback_failed"
         if alert_type == AlertType.STRONG_PULLBACK_WATCH:
             return "pullback_watch"
         if alert_type == AlertType.PULLBACK_SECOND_LEG:

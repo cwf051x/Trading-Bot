@@ -4,6 +4,7 @@
 
 from app.alerts.rules.base import AlertRule
 from app.alerts.rules.hourly_trend import HourlyTrendRule
+from app.alerts.rules.pump_pullback_second_wave import PumpPullbackSecondWaveRule
 from app.alerts.rules.volume_price_oi import VolumePriceOIRule
 
-__all__ = ["AlertRule", "HourlyTrendRule", "VolumePriceOIRule"]
+__all__ = ["AlertRule", "HourlyTrendRule", "PumpPullbackSecondWaveRule", "VolumePriceOIRule"]

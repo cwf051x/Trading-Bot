@@ -62,6 +62,10 @@ ALERT_TYPE_LABELS = {
     "HOURLY_TREND_T2": "小时趋势加速",
     "HOURLY_TREND_T3": "小时回踩接多",
     "HOURLY_TREND_T4": "小时过热风险",
+    "PUMP_PULLBACK_P1": "首波健康回调",
+    "PUMP_PULLBACK_P2": "二波启动预警",
+    "PUMP_PULLBACK_P3": "二波确认突破",
+    "PUMP_PULLBACK_P4": "二波失败风险",
 }
 
 

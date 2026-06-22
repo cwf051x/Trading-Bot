@@ -120,7 +120,12 @@ ALERT_HOURLY_T4_OI_CHANGE_24H=0.40
 
 `ALERT_WATCHLIST` 是行情雷达专用白名单，留空时扫描全部符合流动性要求的 USDT 永续合约；`ALERT_BLACKLIST` 用于排除不想提醒的交易对。两者都支持 `BTCUSDT` 或 `BTC/USDT:USDT` 写法。
 
-行情雷达规则采用插件式结构：每个规则声明自己需要的 K 线周期、OI 周期和资金费率，scanner 会按启用规则合并请求。`ALERT_RULE_HOURLY_TREND_ENABLED=true` 会启用小时级单边趋势雷达，并额外为强候选币请求 1h OI 与 funding rate；如需只保留量价 OI 共振，可设为 `false`。
+行情雷达规则采用插件式结构：每个规则声明自己需要的 K 线周期、OI 周期和资金费率，scanner 会按启用规则合并请求。规则阈值和开关以 `config/radar_rules.yaml` 为准；`.env` 继续用于密钥、端口、运行模式等部署参数。
+
+`config/radar_rules.yaml` 当前包含：
+
+- `hourly_trend`：小时级单边趋势雷达，覆盖 T1/T2/T3/T4。
+- `pump_pullback_second_wave`：爆拉后健康回调 + 二波启动雷达，覆盖 P1/P2/P3/P4。
 
 ## 运行回测
 

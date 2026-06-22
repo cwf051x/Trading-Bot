@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable, Iterable, TypeVar
 
 from app.alerts.profiling import CycleProfiler
+from app.alerts.rule_config import load_radar_rule_config
 from app.data.market_snapshot import aggregate_klines, build_market_metrics, compute_timeframe_stats, pct_change
 from app.data.symbol_universe import filter_symbol_universe, normalize_symbol, parse_symbol_list
 from app.exchange.binance import BinanceFuturesClient, Kline
@@ -44,6 +45,8 @@ class MarketScanner:
         self._throttle_lock = Lock()
         self._last_fetch_started_at = 0.0
         self._rate_limit_backoff_until = 0.0
+        if not hasattr(self.settings, "radar_rule_config"):
+            object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
 
     def scan(self) -> list[Any]:
         """Scan the configured market universe once.
@@ -107,14 +110,18 @@ class MarketScanner:
         candidate_klines_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {})))
         candidate_klines_by_symbol = {symbol: klines for symbol, klines in candidate_klines_pairs}
         oi_refresh_symbols = self._select_oi_refresh_symbols(strong_symbols, fast_klines_by_symbol, now=now)
-        hourly_trend_enabled = bool(getattr(self.settings, "alert_rule_hourly_trend_enabled", True))
+        hourly_trend_enabled = bool(self.settings.radar_rule_config["hourly_trend"]["enabled"])
+        pump_pullback_enabled = bool(self.settings.radar_rule_config["pump_pullback_second_wave"]["enabled"])
         oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="5m")
         hourly_oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="1h") if hourly_trend_enabled else {}
+        pump_oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="15m") if pump_pullback_enabled else {}
         oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="5m", force_refresh=True))
         hourly_oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="1h", force_refresh=True)) if hourly_trend_enabled else []
+        pump_oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="15m", force_refresh=True, limit=100)) if pump_pullback_enabled else []
         funding_pairs = self._run_limited(sorted(strong_symbols), self._get_funding_rate_safe) if hourly_trend_enabled else []
         oi_history_by_symbol.update({symbol: history for symbol, history in oi_pairs})
         hourly_oi_history_by_symbol.update({symbol: history for symbol, history in hourly_oi_pairs})
+        pump_oi_history_by_symbol.update({symbol: history for symbol, history in pump_oi_pairs})
         funding_rate_by_symbol = {symbol: funding_rate for symbol, funding_rate in funding_pairs}
         metrics_rows = []
         for ticker in candidate_rows:
@@ -122,6 +129,7 @@ class MarketScanner:
             klines = candidate_klines_by_symbol.get(symbol, {})
             oi_history = oi_history_by_symbol.get(symbol, [])
             trend_oi_history = hourly_oi_history_by_symbol.get(symbol, [])
+            pump_oi_history_15m = pump_oi_history_by_symbol.get(symbol, [])
             funding_rate = funding_rate_by_symbol.get(symbol)
             with profiler.measure("build_metrics"):
                 metrics = build_market_metrics(
@@ -132,6 +140,8 @@ class MarketScanner:
                     funding_rate=funding_rate,
                     oi_history=oi_history,
                     trend_oi_history=trend_oi_history,
+                    pump_oi_history_15m=pump_oi_history_15m,
+                    radar_rule_config=self.settings.radar_rule_config,
                 )
             if metrics is None:
                 logger.info("Skipping %s because market data is insufficient", symbol)
@@ -531,14 +541,29 @@ class MarketScanner:
                 with self._profiler.measure(f"fetch_klines_{timeframe}"):
                     self._increment_cache_stat("kline_fetch_count")
                     self._throttle_fetch()
-                    return self.client.get_klines(symbol, timeframe, limit=limit)
+                    return self._closed_klines(self.client.get_klines(symbol, timeframe, limit=limit), timeframe)
             self._increment_cache_stat("kline_fetch_count")
             self._throttle_fetch()
-            return self.client.get_klines(symbol, timeframe, limit=limit)
+            return self._closed_klines(self.client.get_klines(symbol, timeframe, limit=limit), timeframe)
         except Exception as exc:  # pragma: no cover - network dependent
             self._handle_rate_limit_error(exc)
             logger.warning("Failed to fetch %s %s klines: %s", symbol, timeframe, exc)
             return []
+
+    def _closed_klines(self, klines: list[Kline], timeframe: str) -> list[Kline]:
+        """Drop Binance's still-forming latest candle before metrics use it.
+        在计算指标前丢弃 Binance 返回的未收盘最新 K 线。
+        """
+
+        if not klines:
+            return []
+        timeframe_ms = self.get_timeframe_seconds(timeframe) * 1000
+        if timeframe_ms <= 0:
+            return klines
+        now_ms = int(time.time() * 1000)
+        if klines[-1].timestamp + timeframe_ms > now_ms:
+            return klines[:-1]
+        return klines
 
     def _get_open_interest_history_safe(self, symbol: str, period: str = "5m", force_refresh: bool = False, limit: int = 30) -> list[Any]:
         """Fetch OI history without crashing the full scan.
@@ -579,7 +604,7 @@ class MarketScanner:
 
         try:
             now = time.time()
-            ttl_seconds = int(getattr(self.settings, "alert_funding_rate_ttl_seconds", 900))
+            ttl_seconds = int(self.settings.radar_rule_config["hourly_trend"].get("funding_rate_ttl_seconds", getattr(self.settings, "alert_funding_rate_ttl_seconds", 900)))
             cached = self.funding_cache.get(symbol)
             if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
                 self._increment_cache_stat("funding_cache_hits")

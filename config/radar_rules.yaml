@@ -1,0 +1,52 @@
+hourly_trend:
+  enabled: true
+  funding_rate_ttl_seconds: 900
+  t1:
+    price_change_6h: 0.08
+    ma7_ma25_min_ratio: 0.995
+    volume_multiplier: 1.5
+    oi_change_6h: 0.08
+  t2:
+    price_change_12h: 0.20
+    bullish_count_12: 8
+    oi_change_12h: 0.15
+    volume_expansion: 1.5
+  t3:
+    price_change_12h: 0.15
+    oi_change_12h: 0.10
+    pullback_min: 0.04
+    pullback_max: 0.10
+    oi_pullback_max: 0.10
+  t4:
+    price_change_24h: 0.50
+    ma25_deviation: 0.20
+    rsi6: 85
+    rsi24: 75
+    oi_change_24h: 0.40
+
+pump_pullback_second_wave:
+  enabled: true
+  first_pump:
+    lookback_hours: 24
+    min_change: 0.15
+    min_duration_hours: 1
+    max_duration_hours: 4
+    volume_multiplier: 2.0
+    oi_change_min: 0.10
+  pullback:
+    min_pullback_from_high: 0.04
+    max_retracement_ratio: 0.65
+    max_pullback_volume_ratio: 0.75
+    max_oi_drawdown_from_peak: 0.15
+  p2:
+    cooldown_seconds: 1800
+    recent_15m_change_3bars: 0.03
+    volume_ratio_15m: 1.8
+    oi_change_30m: 0.03
+    rsi24_min: 45
+  p3:
+    volume_ratio_15m: 2.5
+    oi_change_1h: 0.06
+    near_pump_high_distance: 0.05
+  p4:
+    bypass_cooldown: true

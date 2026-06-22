@@ -7,7 +7,7 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from app.alerts.signal_models import HourlyTrendStats, MarketMetrics, ResonanceStats, TimeframeStats
+from app.alerts.signal_models import HourlyTrendStats, MarketMetrics, PumpPullbackStats, ResonanceStats, TimeframeStats
 from app.exchange.binance import Kline, OpenInterestPoint
 
 
@@ -230,6 +230,136 @@ def build_hourly_trend_stats(
     )
 
 
+def build_pump_pullback_stats(
+    klines_15m: list[Kline],
+    klines_1h: list[Kline],
+    klines_5m: list[Kline],
+    oi_history_15m: list[OpenInterestPoint],
+    oi_history_5m: list[OpenInterestPoint],
+    config: dict[str, Any],
+) -> PumpPullbackStats | None:
+    """Build first-pump pullback and second-wave metrics.
+    构建首波爆拉、健康回调和二波启动指标。
+    """
+
+    if len(klines_15m) < 100 or len(klines_1h) < 100 or len(klines_5m) < 20 or len(oi_history_15m) < 20 or len(oi_history_5m) < 13:
+        return None
+    pump = find_first_pump(klines_15m, oi_history_15m, config["first_pump"])
+    if pump is None:
+        return PumpPullbackStats()
+    start_index, high_index, pump_volume_avg = pump
+    current = klines_15m[-1]
+    pump_start = klines_15m[start_index]
+    pump_high = max(item.high for item in klines_15m[start_index : high_index + 1])
+    pump_high_candle = max(klines_15m[start_index : high_index + 1], key=lambda item: item.high)
+    pump_change = pct_change(pump_start.open, pump_high)
+    pullback_candles = klines_15m[high_index + 1 :]
+    pullback_body = pullback_candles[:-3] if len(pullback_candles) > 6 else pullback_candles
+    range_source = pullback_body or pullback_candles or [current]
+    range_high = max(item.high for item in range_source)
+    range_low = min(item.low for item in range_source)
+    pullback_volume_avg = mean(item.volume for item in pullback_candles) if pullback_candles else current.volume
+    oi_after_start = oi_history_15m[start_index:] if len(oi_history_15m) > start_index else oi_history_15m
+    peak_oi = max((item.open_interest for item in oi_after_start), default=oi_history_15m[-1].open_interest)
+    current_oi = oi_history_15m[-1].open_interest
+    closes_15m = [item.close for item in klines_15m]
+    closes_1h = [item.close for item in klines_1h]
+    ma7_15m = moving_average(closes_15m, 7)
+    ma25_15m = moving_average(closes_15m, 25)
+    prior_ma7_15m = moving_average(closes_15m[:-1], 7)
+    prior_ma25_15m = moving_average(closes_15m[:-1], 25)
+    ma7_1h = moving_average(closes_1h, 7)
+    prior_close_1h = klines_1h[-2].close
+    prior_ma7_1h = moving_average(closes_1h[:-1], 7)
+    ma25_1h = moving_average(closes_1h, 25)
+    ma99_1h = moving_average(closes_1h, 99)
+    rsi6_15m = compute_rsi(klines_15m, 6)
+    rsi24_15m = compute_rsi(klines_15m, 24)
+    prior_rsi6_15m = previous_rsi(klines_15m, 6)
+    prior_rsi24_15m = previous_rsi(klines_15m, 24)
+    volume_base = [item.volume for item in klines_15m[-21:-1]]
+    volume_avg20 = mean(volume_base) if volume_base else 0.0
+    price_30m_ago = klines_15m[-3].close if len(klines_15m) >= 3 else current.open
+    return PumpPullbackStats(
+        has_first_pump=True,
+        pump_start_time=pump_start.timestamp,
+        pump_high_time=pump_high_candle.timestamp,
+        pump_start_price=pump_start.open,
+        pump_high=pump_high,
+        pump_change=pump_change,
+        pullback_from_high=(pump_high - current.close) / pump_high if pump_high else 0.0,
+        retracement_ratio=(pump_high - current.close) / (pump_high - pump_start.open) if pump_high > pump_start.open else 0.0,
+        pullback_volume_ratio=pullback_volume_avg / pump_volume_avg if pump_volume_avg else 0.0,
+        oi_drawdown_from_peak=(peak_oi - current_oi) / peak_oi if peak_oi else 0.0,
+        price_above_pump_start=current.close > pump_start.open,
+        price_above_1h_ma25=ma25_1h > 0 and klines_1h[-1].close > ma25_1h,
+        price_above_1h_ma99=ma99_1h > 0 and klines_1h[-1].close > ma99_1h,
+        ma7_15m=ma7_15m,
+        ma25_15m=ma25_15m,
+        ma7_crossed_above_ma25_15m=prior_ma7_15m <= prior_ma25_15m and ma7_15m > ma25_15m if prior_ma7_15m and prior_ma25_15m else False,
+        rsi6_15m=rsi6_15m,
+        rsi24_15m=rsi24_15m,
+        rsi6_crossed_above_rsi24_15m=prior_rsi6_15m is not None and prior_rsi24_15m is not None and rsi6_15m is not None and rsi24_15m is not None and prior_rsi6_15m <= prior_rsi24_15m and rsi6_15m > rsi24_15m,
+        recent_15m_change_3bars=pct_change(klines_15m[-4].close, current.close),
+        volume_ratio_15m=current.volume / volume_avg20 if volume_avg20 else 0.0,
+        oi_change_30m=oi_change(oi_history_5m, 6),
+        oi_change_1h=oi_change(oi_history_5m, 12),
+        range_high=range_high,
+        range_low=range_low,
+        price_breaks_range_high=current.close > range_high,
+        price_near_or_above_pump_high=current.close >= pump_high * (1 - config["p3"]["near_pump_high_distance"]),
+        one_hour_close_above_ma7=ma7_1h > 0 and klines_1h[-1].close > ma7_1h,
+        one_hour_reclaimed_ma7=prior_ma7_1h > 0 and prior_close_1h < prior_ma7_1h and klines_1h[-1].close > ma7_1h,
+        fell_back_into_range=current.close < range_high,
+        oi_up_price_down=oi_change(oi_history_5m, 6) > 0 and pct_change(price_30m_ago, current.close) <= 0,
+        long_upper_wick_15m=is_long_upper_wick(current, volume_avg20),
+        broke_pullback_low=current.close < range_low,
+        ma_structure_15m="多头排列" if ma7_15m > ma25_15m else "修复中" if current.close > ma25_15m else "转弱",
+        ma_structure_1h="多头排列" if klines_1h[-1].close > ma7_1h > ma25_1h > ma99_1h else "偏多" if klines_1h[-1].close > ma25_1h else "转弱",
+    )
+
+
+def find_first_pump(klines_15m: list[Kline], oi_history_15m: list[OpenInterestPoint], config: dict[str, Any]) -> tuple[int, int, float] | None:
+    """Find the strongest valid first-pump window in recent 24h.
+    在最近 24 小时内查找最强的首波爆拉窗口。
+    """
+
+    lookback = int(config["lookback_hours"] * 4)
+    min_window = int(config["min_duration_hours"] * 4)
+    max_window = int(config["max_duration_hours"] * 4)
+    start_floor = max(1, len(klines_15m) - lookback)
+    best: tuple[float, int, int, float] | None = None
+    for start in range(start_floor, len(klines_15m) - min_window):
+        prior = klines_15m[max(0, start - lookback) : start]
+        if not prior:
+            continue
+        prior_high = max(item.high for item in prior)
+        prior_volume_avg = mean(item.volume for item in prior)
+        for window in range(min_window, max_window + 1):
+            end = start + window - 1
+            if end >= len(klines_15m):
+                continue
+            segment = klines_15m[start : end + 1]
+            segment_high = max(item.high for item in segment)
+            change = pct_change(klines_15m[start].open, segment_high)
+            volume_avg = mean(item.volume for item in segment)
+            if end >= len(oi_history_15m) or start >= len(oi_history_15m):
+                continue
+            oi_move = pct_change(oi_history_15m[start].open_interest, oi_history_15m[end].open_interest)
+            matched = (
+                change > config["min_change"]
+                and volume_avg > prior_volume_avg * config["volume_multiplier"]
+                and oi_move > config["oi_change_min"]
+                and segment_high > prior_high
+            )
+            if matched and (best is None or change > best[0]):
+                best = (change, start, end, volume_avg)
+    if best is None:
+        return None
+    _, start, end, volume_avg = best
+    return start, end, volume_avg
+
+
 def is_long_upper_wick(kline: Kline, average_volume: float) -> bool:
     """Return whether a candle has a meaningful high-volume upper wick.
     判断 K 线是否出现带量长上影。
@@ -314,6 +444,8 @@ def build_market_metrics(
     open_interest: float | None = None,
     oi_history: list[OpenInterestPoint] | None = None,
     trend_oi_history: list[OpenInterestPoint] | None = None,
+    pump_oi_history_15m: list[OpenInterestPoint] | None = None,
+    radar_rule_config: dict[str, Any] | None = None,
 ) -> MarketMetrics | None:
     """Build derived metrics for one symbol, returning None when data is insufficient.
     为单个交易对构建派生指标；数据不足时返回 None。
@@ -344,5 +476,6 @@ def build_market_metrics(
         open_interest=open_interest,
         resonance=build_resonance_stats(klines_by_timeframe["5m"], oi_history or []),
         trend=build_hourly_trend_stats(klines_by_timeframe["1h"], klines_by_timeframe["15m"], trend_oi_history or [], funding_rate=funding_rate),
+        pump_pullback=build_pump_pullback_stats(klines_by_timeframe["15m"], klines_by_timeframe["1h"], klines_by_timeframe["5m"], pump_oi_history_15m or [], oi_history or [], (radar_rule_config or {}).get("pump_pullback_second_wave", {})) if (radar_rule_config or {}).get("pump_pullback_second_wave") else None,
         raw={"ticker": ticker},
     )

@@ -25,6 +25,10 @@ class AlertType(str, Enum):
     HOURLY_TREND_T2 = "HOURLY_TREND_T2"
     HOURLY_TREND_T3 = "HOURLY_TREND_T3"
     HOURLY_TREND_T4 = "HOURLY_TREND_T4"
+    PUMP_PULLBACK_P1 = "PUMP_PULLBACK_P1"
+    PUMP_PULLBACK_P2 = "PUMP_PULLBACK_P2"
+    PUMP_PULLBACK_P3 = "PUMP_PULLBACK_P3"
+    PUMP_PULLBACK_P4 = "PUMP_PULLBACK_P4"
 
 
 class AlertLevel(str, Enum):
@@ -130,6 +134,49 @@ class HourlyTrendStats:
 
 
 @dataclass(frozen=True)
+class PumpPullbackStats:
+    """Derived fields for pump pullback and second-wave radar.
+    爆拉后健康回调与二波启动雷达使用的派生字段。
+    """
+
+    has_first_pump: bool = False
+    pump_start_time: int | None = None
+    pump_high_time: int | None = None
+    pump_start_price: float = 0.0
+    pump_high: float = 0.0
+    pump_change: float = 0.0
+    pullback_from_high: float = 0.0
+    retracement_ratio: float = 0.0
+    pullback_volume_ratio: float = 0.0
+    oi_drawdown_from_peak: float = 0.0
+    price_above_pump_start: bool = False
+    price_above_1h_ma25: bool = False
+    price_above_1h_ma99: bool = False
+    ma7_15m: float = 0.0
+    ma25_15m: float = 0.0
+    ma7_crossed_above_ma25_15m: bool = False
+    rsi6_15m: float | None = None
+    rsi24_15m: float | None = None
+    rsi6_crossed_above_rsi24_15m: bool = False
+    recent_15m_change_3bars: float = 0.0
+    volume_ratio_15m: float = 0.0
+    oi_change_30m: float = 0.0
+    oi_change_1h: float = 0.0
+    range_high: float = 0.0
+    range_low: float = 0.0
+    price_breaks_range_high: bool = False
+    price_near_or_above_pump_high: bool = False
+    one_hour_close_above_ma7: bool = False
+    one_hour_reclaimed_ma7: bool = False
+    fell_back_into_range: bool = False
+    oi_up_price_down: bool = False
+    long_upper_wick_15m: bool = False
+    broke_pullback_low: bool = False
+    ma_structure_15m: str = ""
+    ma_structure_1h: str = ""
+
+
+@dataclass(frozen=True)
 class MarketMetrics:
     """Derived market metrics consumed by rules and scoring.
     供规则和评分使用的行情派生指标。
@@ -152,6 +199,7 @@ class MarketMetrics:
     open_interest: float | None = None
     resonance: ResonanceStats | None = None
     trend: HourlyTrendStats | None = None
+    pump_pullback: PumpPullbackStats | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

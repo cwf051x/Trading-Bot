@@ -89,6 +89,55 @@ def test_alert_cooldown_is_per_symbol_and_alert_type(tmp_path: Path) -> None:
     assert manager.should_send(make_alert(timestamp=first.timestamp + 60_000), now_ms=first.timestamp + 60_000) is False
 
 
+def test_alert_metadata_can_disable_telegram_send(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "alerts.sqlite")
+    storage.initialize()
+    manager = AlertStateManager(storage, Settings(_env_file=None))
+    alert = AlertSignal(**{**make_alert().__dict__, "alert_type": AlertType.PUMP_PULLBACK_P1, "level": AlertLevel.B, "raw": {"metadata": {"send_to_telegram": False}}})
+
+    assert manager.should_record(alert, now_ms=alert.timestamp) is True
+    assert manager.should_send(alert, now_ms=alert.timestamp) is False
+
+
+def test_alert_metadata_custom_cooldown_blocks_p2_for_30_minutes(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "alerts.sqlite")
+    storage.initialize()
+    manager = AlertStateManager(storage, Settings(_env_file=None))
+    first = AlertSignal(**{**make_alert().__dict__, "alert_type": AlertType.PUMP_PULLBACK_P2, "level": AlertLevel.B, "raw": {"metadata": {"cooldown_seconds": 1800}}})
+    repeated = AlertSignal(**{**first.__dict__, "timestamp": first.timestamp + 1_200_000})
+
+    manager.record_alert(first, sent_to_telegram=True)
+
+    assert manager.should_record(repeated, now_ms=repeated.timestamp) is False
+    assert manager.should_send(repeated, now_ms=repeated.timestamp) is False
+
+
+def test_alert_metadata_allows_new_p3_range_breakout(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "alerts.sqlite")
+    storage.initialize()
+    manager = AlertStateManager(storage, Settings(_env_file=None))
+    first = AlertSignal(**{**make_alert().__dict__, "alert_type": AlertType.PUMP_PULLBACK_P3, "level": AlertLevel.A, "raw": {"metadata": {"range_breakout_key": 1.2}}})
+    next_range = AlertSignal(**{**first.__dict__, "timestamp": first.timestamp + 60_000, "raw": {"metadata": {"range_breakout_key": 1.25}}})
+
+    manager.record_alert(first, sent_to_telegram=True)
+
+    assert manager.should_record(next_range, now_ms=next_range.timestamp) is True
+    assert manager.should_send(next_range, now_ms=next_range.timestamp) is True
+
+
+def test_alert_metadata_bypasses_cooldown_for_p4_failure(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "alerts.sqlite")
+    storage.initialize()
+    manager = AlertStateManager(storage, Settings(_env_file=None))
+    first = AlertSignal(**{**make_alert().__dict__, "alert_type": AlertType.PUMP_PULLBACK_P4, "level": AlertLevel.A, "raw": {"metadata": {"bypass_cooldown": True}}})
+    repeated = AlertSignal(**{**first.__dict__, "timestamp": first.timestamp + 10_000})
+
+    manager.record_alert(first, sent_to_telegram=True)
+
+    assert manager.should_record(repeated, now_ms=repeated.timestamp) is True
+    assert manager.should_send(repeated, now_ms=repeated.timestamp) is True
+
+
 def test_telegram_alert_formatter_contains_risk_warning() -> None:
     message = format_alert_message(make_alert())
 

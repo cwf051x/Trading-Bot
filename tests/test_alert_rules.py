@@ -3,7 +3,7 @@
 """
 
 from app.alerts.alert_rules import AlertRuleEngine
-from app.alerts.signal_models import AlertType, HourlyTrendStats, MarketMetrics, ResonanceStats, TimeframeStats
+from app.alerts.signal_models import AlertType, HourlyTrendStats, MarketMetrics, PumpPullbackStats, ResonanceStats, TimeframeStats
 from app.config import Settings
 from app.data.market_snapshot import build_market_metrics
 from app.exchange.binance import Kline
@@ -115,6 +115,51 @@ def make_hourly_trend(**overrides) -> HourlyTrendStats:
     return HourlyTrendStats(**{**stats.__dict__, **overrides})
 
 
+def make_pump_pullback(**overrides) -> PumpPullbackStats:
+    """Build pump-pullback stats for rule tests.
+    构建爆拉回调二波规则测试指标。
+    """
+
+    stats = PumpPullbackStats(
+        has_first_pump=True,
+        pump_start_time=1_000,
+        pump_high_time=2_000,
+        pump_start_price=1.0,
+        pump_high=1.25,
+        pump_change=0.25,
+        pullback_from_high=0.08,
+        retracement_ratio=0.40,
+        pullback_volume_ratio=0.45,
+        oi_drawdown_from_peak=0.05,
+        price_above_pump_start=True,
+        price_above_1h_ma25=True,
+        price_above_1h_ma99=True,
+        ma7_15m=1.16,
+        ma25_15m=1.14,
+        ma7_crossed_above_ma25_15m=False,
+        rsi6_15m=62,
+        rsi24_15m=52,
+        rsi6_crossed_above_rsi24_15m=True,
+        recent_15m_change_3bars=0.04,
+        volume_ratio_15m=3.0,
+        oi_change_30m=0.04,
+        oi_change_1h=0.07,
+        range_high=1.19,
+        range_low=1.12,
+        price_breaks_range_high=True,
+        price_near_or_above_pump_high=True,
+        one_hour_close_above_ma7=True,
+        one_hour_reclaimed_ma7=False,
+        fell_back_into_range=False,
+        oi_up_price_down=False,
+        long_upper_wick_15m=False,
+        broke_pullback_low=False,
+        ma_structure_15m="多头排列",
+        ma_structure_1h="多头排列",
+    )
+    return PumpPullbackStats(**{**stats.__dict__, **overrides})
+
+
 def test_top_gainer_momentum_rule() -> None:
     types = alert_types(make_metrics(resonance=make_resonance()))
 
@@ -211,6 +256,36 @@ def test_hourly_trend_t4_is_risk_only() -> None:
     assert results[0].alert_type == AlertType.HOURLY_TREND_T4
     assert results[0].metadata["auto_paper"] is False
     assert "不是做空信号" in results[0].suggested_action
+
+
+def test_pump_pullback_p1_is_watch_only() -> None:
+    metrics = make_metrics(pump_pullback=make_pump_pullback(recent_15m_change_3bars=0.01, volume_ratio_15m=1.0, oi_change_30m=0.0, rsi6_crossed_above_rsi24_15m=False))
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.PUMP_PULLBACK_P1
+    assert results[0].metadata["send_to_telegram"] is False
+    assert results[0].metadata["auto_paper"] is False
+
+
+def test_pump_pullback_p3_confirmation_beats_p2() -> None:
+    metrics = make_metrics(pump_pullback=make_pump_pullback())
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.PUMP_PULLBACK_P3
+    assert results[0].metadata["pump_pullback_level"] == "P3"
+    assert results[0].metadata["auto_paper"] is True
+
+
+def test_pump_pullback_p4_failure_has_highest_priority() -> None:
+    metrics = make_metrics(pump_pullback=make_pump_pullback(fell_back_into_range=True, broke_pullback_low=True))
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics, {"state": "pump_pullback_p2"})
+
+    assert results[0].alert_type == AlertType.PUMP_PULLBACK_P4
+    assert results[0].metadata["bypass_cooldown"] is True
+    assert results[0].metadata["cancel_watch"] is True
 
 
 def test_btc_dump_blocks_long_bias_alerts() -> None:

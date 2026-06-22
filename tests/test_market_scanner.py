@@ -10,6 +10,7 @@ from collections import Counter
 import pytest
 
 from app.alerts.scanner import MarketScanner
+from app.alerts.rule_config import DEFAULT_RADAR_RULE_CONFIG
 from app.config import Settings
 from app.exchange.binance import Kline, OpenInterestPoint
 
@@ -17,6 +18,20 @@ from app.exchange.binance import Kline, OpenInterestPoint
 class FailingOIClient:
     def get_open_interest_history(self, symbol: str, period: str = "5m", limit: int = 30):
         raise TimeoutError("read timeout")
+
+
+def disable_extra_rule_fetches(settings: Settings) -> Settings:
+    """Disable newer rule fetches for legacy scanner request-count tests.
+    在旧 scanner 请求计数测试中关闭新增规则的数据请求。
+    """
+
+    config = {
+        **DEFAULT_RADAR_RULE_CONFIG,
+        "hourly_trend": {**DEFAULT_RADAR_RULE_CONFIG["hourly_trend"], "enabled": False},
+        "pump_pullback_second_wave": {**DEFAULT_RADAR_RULE_CONFIG["pump_pullback_second_wave"], "enabled": False},
+    }
+    object.__setattr__(settings, "radar_rule_config", config)
+    return settings
 
 
 def test_oi_history_failures_are_summarized_once(caplog) -> None:
@@ -82,7 +97,7 @@ class CountingMarketClient:
 
 def test_scanner_fetches_deep_data_only_for_candidate_pool() -> None:
     client = CountingMarketClient(ticker_count=20)
-    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=5, ALERT_OI_TOP_N=2, ALERT_RULE_HOURLY_TREND_ENABLED=False)
+    settings = disable_extra_rule_fetches(Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=5, ALERT_OI_TOP_N=2, ALERT_RULE_HOURLY_TREND_ENABLED=False))
     scanner = MarketScanner(client, settings)
 
     rows = scanner.scan()
@@ -98,7 +113,7 @@ def test_scanner_fetches_deep_data_only_for_candidate_pool() -> None:
 
 def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
     client = CountingMarketClient(ticker_count=5)
-    settings = Settings(
+    settings = disable_extra_rule_fetches(Settings(
         _env_file=None,
         ALERT_CANDIDATE_TOP_N=3,
         ALERT_OI_TOP_N=2,
@@ -106,7 +121,7 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
         ALERT_KLINE_SLOW_TTL_SECONDS=600,
         ALERT_OI_TTL_SECONDS=60,
         ALERT_RULE_HOURLY_TREND_ENABLED=False,
-    )
+    ))
     scanner = MarketScanner(client, settings)
 
     scanner.scan()
@@ -125,7 +140,7 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
 
 def test_scanner_limits_oi_refreshes_per_loop() -> None:
     client = CountingMarketClient(ticker_count=8)
-    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=6, ALERT_OI_MAX_REFRESH_PER_LOOP=2, ALERT_RULE_HOURLY_TREND_ENABLED=False)
+    settings = disable_extra_rule_fetches(Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=6, ALERT_OI_TOP_N=6, ALERT_OI_MAX_REFRESH_PER_LOOP=2, ALERT_RULE_HOURLY_TREND_ENABLED=False))
     scanner = MarketScanner(client, settings)
 
     scanner.scan()
@@ -138,7 +153,7 @@ def test_scanner_limits_oi_refreshes_per_loop() -> None:
 
 def test_scanner_does_not_refetch_tiered_oi_cache_when_ttl_is_valid() -> None:
     client = CountingMarketClient(ticker_count=8)
-    settings = Settings(
+    settings = disable_extra_rule_fetches(Settings(
         _env_file=None,
         ALERT_CANDIDATE_TOP_N=6,
         ALERT_OI_TOP_N=6,
@@ -147,7 +162,7 @@ def test_scanner_does_not_refetch_tiered_oi_cache_when_ttl_is_valid() -> None:
         ALERT_OI_WARM_TTL_SECONDS=300,
         ALERT_OI_COLD_TTL_SECONDS=300,
         ALERT_RULE_HOURLY_TREND_ENABLED=False,
-    )
+    ))
     scanner = MarketScanner(client, settings)
 
     scanner.scan()

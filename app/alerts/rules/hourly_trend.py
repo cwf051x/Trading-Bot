@@ -27,7 +27,7 @@ class HourlyTrendRule(AlertRule):
         return True
 
     def evaluate(self, metrics: MarketMetrics, state: dict[str, Any]) -> list[AlertRuleResult]:
-        if not bool(getattr(self.settings, "alert_rule_hourly_trend_enabled", True)):
+        if not bool(self.settings.radar_rule_config["hourly_trend"]["enabled"]):
             return []
         stats = metrics.trend
         if stats is None:
@@ -46,17 +46,18 @@ class HourlyTrendRule(AlertRule):
         stats = metrics.trend
         if stats is None:
             return None
+        t3 = self.settings.radar_rule_config["hourly_trend"]["t3"]
         matched = (
             metrics.price > stats.ma25
             and stats.ma7 > stats.ma25
-            and stats.price_change_12h > getattr(self.settings, "alert_hourly_t3_price_change_12h", 0.15)
-            and stats.oi_change_12h > getattr(self.settings, "alert_hourly_t3_oi_change_12h", 0.10)
-            and getattr(self.settings, "alert_hourly_t3_pullback_min", 0.04) <= stats.pullback_from_recent_high <= getattr(self.settings, "alert_hourly_t3_pullback_max", 0.10)
+            and stats.price_change_12h > t3["price_change_12h"]
+            and stats.oi_change_12h > t3["oi_change_12h"]
+            and t3["pullback_min"] <= stats.pullback_from_recent_high <= t3["pullback_max"]
             and stats.near_ma7_or_ma25
             and stats.rsi15m_crossed_up
             and stats.reversal_15m
             and stats.pullback_volume_safe
-            and stats.oi_pullback_from_high <= getattr(self.settings, "alert_hourly_t3_oi_pullback_max", 0.10)
+            and stats.oi_pullback_from_high <= t3["oi_pullback_max"]
         )
         if not matched:
             return None
@@ -78,14 +79,15 @@ class HourlyTrendRule(AlertRule):
         stats = metrics.trend
         if stats is None:
             return None
+        t4 = self.settings.radar_rule_config["hourly_trend"]["t4"]
         matched = (
-            stats.price_change_24h > getattr(self.settings, "alert_hourly_t4_price_change_24h", 0.50)
-            and stats.distance_to_ma25 > getattr(self.settings, "alert_hourly_t4_ma25_deviation", 0.20)
+            stats.price_change_24h > t4["price_change_24h"]
+            and stats.distance_to_ma25 > t4["ma25_deviation"]
             and stats.rsi6 is not None
-            and stats.rsi6 > getattr(self.settings, "alert_hourly_t4_rsi6", 85.0)
+            and stats.rsi6 > t4["rsi6"]
             and stats.rsi24 is not None
-            and stats.rsi24 > getattr(self.settings, "alert_hourly_t4_rsi24", 75.0)
-            and stats.oi_change_24h > getattr(self.settings, "alert_hourly_t4_oi_change_24h", 0.40)
+            and stats.rsi24 > t4["rsi24"]
+            and stats.oi_change_24h > t4["oi_change_24h"]
             and (stats.long_upper_wick_1h or stats.long_upper_wick_2h or stats.consecutive_red_1h)
         )
         if not matched:
@@ -105,14 +107,15 @@ class HourlyTrendRule(AlertRule):
         stats = metrics.trend
         if stats is None:
             return None
+        t2 = self.settings.radar_rule_config["hourly_trend"]["t2"]
         matched = (
-            stats.price_change_12h > getattr(self.settings, "alert_hourly_t2_price_change_12h", 0.20)
-            and stats.bullish_1h_count_12 >= getattr(self.settings, "alert_hourly_t2_bullish_count_12", 8)
+            stats.price_change_12h > t2["price_change_12h"]
+            and stats.bullish_1h_count_12 >= t2["bullish_count_12"]
             and metrics.price > stats.ma7 > stats.ma25
             and stats.ma7_slope > 0
             and stats.ma25_slope > 0
-            and stats.oi_change_12h > getattr(self.settings, "alert_hourly_t2_oi_change_12h", 0.15)
-            and stats.volume_avg_12h > stats.volume_avg_48h * getattr(self.settings, "alert_hourly_t2_volume_expansion", 1.5)
+            and stats.oi_change_12h > t2["oi_change_12h"]
+            and stats.volume_avg_12h > stats.volume_avg_48h * t2["volume_expansion"]
             and stats.recent_3h_holds_ma25
         )
         if not matched:
@@ -135,12 +138,13 @@ class HourlyTrendRule(AlertRule):
         stats = metrics.trend
         if stats is None:
             return None
+        t1 = self.settings.radar_rule_config["hourly_trend"]["t1"]
         matched = (
-            stats.price_change_6h > getattr(self.settings, "alert_hourly_t1_price_change_6h", 0.08)
+            stats.price_change_6h > t1["price_change_6h"]
             and metrics.price > stats.ma25
-            and stats.ma7 >= stats.ma25 * getattr(self.settings, "alert_hourly_t1_ma7_ma25_min_ratio", 0.995)
-            and stats.current_1h_volume > stats.volume_avg_20h * getattr(self.settings, "alert_hourly_t1_volume_multiplier", 1.5)
-            and stats.oi_change_6h > getattr(self.settings, "alert_hourly_t1_oi_change_6h", 0.08)
+            and stats.ma7 >= stats.ma25 * t1["ma7_ma25_min_ratio"]
+            and stats.current_1h_volume > stats.volume_avg_20h * t1["volume_multiplier"]
+            and stats.oi_change_6h > t1["oi_change_6h"]
             and stats.close_above_high_12h_previous
         )
         if not matched:
@@ -184,4 +188,3 @@ class HourlyTrendRule(AlertRule):
             "funding_rate": stats.funding_rate,
             "risk_tags": risk_tags or [],
         }
-

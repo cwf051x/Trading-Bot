@@ -19,6 +19,10 @@ ALERT_TYPE_TITLES = {
     AlertType.HOURLY_TREND_T2: "小时趋势加速 / Hourly Trend T2",
     AlertType.HOURLY_TREND_T3: "小时回踩接多观察 / Hourly Trend T3",
     AlertType.HOURLY_TREND_T4: "小时高位过热风险 / Hourly Trend T4",
+    AlertType.PUMP_PULLBACK_P1: "首波后健康回调 / Pump Pullback P1",
+    AlertType.PUMP_PULLBACK_P2: "二波启动预警 / Pump Pullback P2",
+    AlertType.PUMP_PULLBACK_P3: "二波确认突破 / Pump Pullback P3",
+    AlertType.PUMP_PULLBACK_P4: "二波失败风险 / Pump Pullback P4",
 }
 
 

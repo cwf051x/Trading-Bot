@@ -6,8 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.alerts.rule_config import load_radar_rule_config
 from app.alerts.rules.base import AlertRule
 from app.alerts.rules.hourly_trend import HourlyTrendRule
+from app.alerts.rules.pump_pullback_second_wave import PumpPullbackSecondWaveRule
 from app.alerts.rules.volume_price_oi import VolumePriceOIRule
 from app.alerts.signal_models import AlertRuleResult, MarketMetrics
 
@@ -19,9 +21,12 @@ class AlertRuleEngine:
 
     def __init__(self, settings: Any, rules: list[AlertRule] | None = None) -> None:
         self.settings = settings
+        if not hasattr(self.settings, "radar_rule_config"):
+            object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
         self.rules = rules or [
             VolumePriceOIRule(settings),
             HourlyTrendRule(settings),
+            PumpPullbackSecondWaveRule(settings),
         ]
 
     def evaluate(self, metrics: MarketMetrics, state: dict[str, Any] | None = None) -> list[AlertRuleResult]:
