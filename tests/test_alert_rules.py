@@ -3,6 +3,7 @@
 """
 
 from app.alerts.alert_rules import AlertRuleEngine
+from app.alerts.rule_config import DEFAULT_RADAR_RULE_CONFIG
 from app.alerts.signal_models import AlertType, HourlyTrendStats, MarketMetrics, PumpPullbackStats, ResonanceStats, TimeframeStats
 from app.config import Settings
 from app.data.market_snapshot import build_market_metrics
@@ -223,6 +224,44 @@ def test_high_risk_extension_rule() -> None:
     types = alert_types(metrics)
 
     assert AlertType.VOLUME_PRICE_OI_RESONANCE in types
+
+
+def test_volume_price_oi_l1_thresholds_are_loaded_from_rule_config() -> None:
+    settings = make_settings()
+    object.__setattr__(
+        settings,
+        "radar_rule_config",
+        {
+            **DEFAULT_RADAR_RULE_CONFIG,
+            "volume_price_oi": {
+                "enabled": True,
+                "l1": {
+                    "price_change_15m": 0.03,
+                    "volume_ratio": 1.6,
+                    "oi_change_15m": 0.03,
+                },
+                "l2": {
+                    "price_change_30m": 0.06,
+                    "price_change_60m": 0.10,
+                    "bullish_5m_count_6": 4,
+                    "volume_continuity": 4,
+                    "oi_change_30m": 0.08,
+                },
+                "l3": {
+                    "price_change_60m": 0.20,
+                    "rsi6": 85,
+                    "ma25_deviation": 0.10,
+                    "oi_change_60m": 0.20,
+                },
+            },
+        },
+    )
+    metrics = make_metrics(resonance=make_resonance(price_change_30m=0.04, price_change_60m=0.06, volume_ratio=1.7, oi_change_30m=0.04))
+
+    results = AlertRuleEngine(settings).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE
+    assert results[0].metadata["resonance_level"] == "L1"
 
 
 def test_hourly_trend_t3_pullback_has_priority() -> None:

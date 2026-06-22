@@ -111,6 +111,43 @@ def test_scanner_fetches_deep_data_only_for_candidate_pool() -> None:
     assert scanner.last_profile.meta["skipped_by_not_candidate"] == 15
 
 
+def test_candidate_pool_merges_gainers_volume_and_recent_change_buckets() -> None:
+    client = CountingMarketClient(ticker_count=6)
+    settings = Settings(
+        _env_file=None,
+        ALERT_CANDIDATE_TOP_N=3,
+        ALERT_CANDIDATE_GAINERS_TOP_N=1,
+        ALERT_CANDIDATE_VOLUME_TOP_N=1,
+        ALERT_CANDIDATE_RECENT_CHANGE_TOP_N=1,
+    )
+    scanner = MarketScanner(client, settings)
+    now = time.time()
+    eligible = [
+        {"symbol": "GAIN/USDT:USDT", "last": 1.2, "close": 1.2, "percentage": 30.0, "quote_volume": 10_000_000},
+        {"symbol": "VOL/USDT:USDT", "last": 1.0, "close": 1.0, "percentage": 1.0, "quote_volume": 200_000_000},
+        {"symbol": "RECENT/USDT:USDT", "last": 1.2, "close": 1.2, "percentage": 0.5, "quote_volume": 20_000_000},
+        {"symbol": "OTHER/USDT:USDT", "last": 1.0, "close": 1.0, "percentage": 2.0, "quote_volume": 30_000_000},
+    ]
+    scanner.ticker_cache["RECENT/USDT:USDT"] = {"data": {"last": 1.0}, "updated_at": now - 60}
+
+    rows = scanner._select_candidate_rows(eligible, now=now)
+
+    assert {row["symbol"] for row in rows} == {"GAIN/USDT:USDT", "VOL/USDT:USDT", "RECENT/USDT:USDT"}
+
+
+def test_scanner_profiles_rule_diagnostic_gate_counts() -> None:
+    client = CountingMarketClient(ticker_count=10)
+    settings = Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=5, ALERT_OI_TOP_N=3, ALERT_OI_MAX_REFRESH_PER_LOOP=3)
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+
+    assert scanner.last_profile.meta["diagnostic_metrics"] == 5
+    assert "diagnostic_resonance_stats" in scanner.last_profile.meta
+    assert "diagnostic_trend_stats" in scanner.last_profile.meta
+    assert "diagnostic_pump_has_first_pump" in scanner.last_profile.meta
+
+
 def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
     client = CountingMarketClient(ticker_count=5)
     settings = disable_extra_rule_fetches(Settings(

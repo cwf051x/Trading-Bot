@@ -86,6 +86,15 @@ class NoisyRules:
         ]
 
 
+class MultiFamilyRules:
+    def evaluate(self, metrics: MarketMetrics, state: dict | None = None) -> list[AlertRuleResult]:
+        return [
+            AlertRuleResult(AlertType.VOLUME_PRICE_OI_RESONANCE, 85, ["resonance / 共振"], "volume price oi"),
+            AlertRuleResult(AlertType.HOURLY_TREND_T2, 86, ["trend / 趋势"], "hourly trend", metadata={"auto_paper": False}),
+            AlertRuleResult(AlertType.PUMP_PULLBACK_P1, 70, ["pullback / 回调"], "pump watch", metadata={"send_to_telegram": False}),
+        ]
+
+
 def test_radar_keeps_one_alert_per_symbol_and_caps_cycle(tmp_path) -> None:
     settings = Settings(_env_file=None, ALERT_MIN_SCORE_TO_STORE=70, ALERT_MAX_ALERTS_PER_CYCLE=5)
     storage = SQLiteStorage(tmp_path / "radar.sqlite")
@@ -98,6 +107,22 @@ def test_radar_keeps_one_alert_per_symbol_and_caps_cycle(tmp_path) -> None:
     assert {alert.alert_type for alert in alerts} == {AlertType.HIGH_RISK_EXTENSION}
     assert all(alert.score >= 70 for alert in alerts)
     assert len(storage.get_market_alerts(limit=20)) == 5
+
+
+def test_radar_keeps_one_alert_per_rule_family_for_same_symbol(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_MIN_SCORE_TO_STORE=70, ALERT_MAX_ALERTS_PER_CYCLE=5)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings)
+    radar.rules = MultiFamilyRules()
+
+    alerts = radar.run_once()
+
+    assert {alert.alert_type for alert in alerts} == {
+        AlertType.VOLUME_PRICE_OI_RESONANCE,
+        AlertType.HOURLY_TREND_T2,
+        AlertType.PUMP_PULLBACK_P1,
+    }
+    assert len(storage.get_market_alerts(limit=20)) == 3
 
 
 class EntryRules:

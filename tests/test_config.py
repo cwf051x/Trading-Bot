@@ -66,6 +66,9 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_PULLBACK_VOLUME_CONTRACTION_MAX",
         "ALERT_OVERHEAT_RSI",
         "ALERT_CANDIDATE_TOP_N",
+        "ALERT_CANDIDATE_GAINERS_TOP_N",
+        "ALERT_CANDIDATE_VOLUME_TOP_N",
+        "ALERT_CANDIDATE_RECENT_CHANGE_TOP_N",
         "ALERT_OI_TOP_N",
         "ALERT_KLINE_FAST_TTL_SECONDS",
         "ALERT_KLINE_MEDIUM_TTL_SECONDS",
@@ -139,8 +142,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_second_leg_min_close_position == 0.55
     assert settings.alert_pullback_volume_contraction_max == 1.0
     assert settings.alert_overheat_rsi == 82.0
-    assert settings.alert_candidate_top_n == 50
-    assert settings.alert_oi_top_n == 30
+    assert settings.alert_candidate_top_n == 80
+    assert settings.alert_candidate_gainers_top_n == 30
+    assert settings.alert_candidate_volume_top_n == 30
+    assert settings.alert_candidate_recent_change_top_n == 30
+    assert settings.alert_oi_top_n == 50
     assert settings.alert_kline_fast_ttl_seconds == 0
     assert settings.alert_kline_medium_ttl_seconds == 180
     assert settings.alert_kline_slow_ttl_seconds == 600
@@ -158,7 +164,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_oi_hot_ttl_seconds == 30
     assert settings.alert_oi_warm_ttl_seconds == 90
     assert settings.alert_oi_cold_ttl_seconds == 600
-    assert settings.alert_oi_max_refresh_per_loop == 15
+    assert settings.alert_oi_max_refresh_per_loop == 30
     assert settings.alert_funding_rate_ttl_seconds == 900
     assert settings.alert_rule_hourly_trend_enabled is True
     assert settings.alert_hourly_t1_price_change_6h == 0.08

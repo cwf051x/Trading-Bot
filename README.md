@@ -122,8 +122,13 @@ ALERT_HOURLY_T4_OI_CHANGE_24H=0.40
 
 行情雷达规则采用插件式结构：每个规则声明自己需要的 K 线周期、OI 周期和资金费率，scanner 会按启用规则合并请求。规则阈值和开关以 `config/radar_rules.yaml` 为准；`.env` 继续用于密钥、端口、运行模式等部署参数。
 
+候选池先用 24h ticker 做轻量筛选，再按涨幅榜、成交额榜、最近 ticker 涨幅榜和 hot/watchlist 分桶合并。默认 `ALERT_CANDIDATE_TOP_N=80`，`ALERT_OI_TOP_N=50`，`ALERT_OI_MAX_REFRESH_PER_LOOP=30`，用于减少漏扫同时避免每轮回到全市场重拉 OI。
+
+radar-loop profiling 会输出 `diagnostic_*` 字段，例如 `diagnostic_resonance_stats`、`diagnostic_trend_stats`、`diagnostic_pump_has_first_pump` 和各规则关键闸口计数，用来判断低命中是数据覆盖不足还是规则条件过严。
+
 `config/radar_rules.yaml` 当前包含：
 
+- `volume_price_oi`：量价 OI 共振拉升雷达，覆盖 L1/L2/L3。
 - `hourly_trend`：小时级单边趋势雷达，覆盖 T1/T2/T3/T4。
 - `pump_pullback_second_wave`：爆拉后健康回调 + 二波启动雷达，覆盖 P1/P2/P3/P4。
 

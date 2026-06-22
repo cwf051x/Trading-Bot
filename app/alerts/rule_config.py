@@ -10,6 +10,27 @@ from typing import Any
 
 
 DEFAULT_RADAR_RULE_CONFIG: dict[str, Any] = {
+    "volume_price_oi": {
+        "enabled": True,
+        "l1": {
+            "price_change_15m": 0.03,
+            "volume_ratio": 1.6,
+            "oi_change_15m": 0.03,
+        },
+        "l2": {
+            "price_change_30m": 0.06,
+            "price_change_60m": 0.10,
+            "bullish_5m_count_6": 4,
+            "volume_continuity": 4,
+            "oi_change_30m": 0.08,
+        },
+        "l3": {
+            "price_change_60m": 0.20,
+            "rsi6": 85.0,
+            "ma25_deviation": 0.10,
+            "oi_change_60m": 0.20,
+        },
+    },
     "hourly_trend": {
         "enabled": True,
         "funding_rate_ttl_seconds": 900,
@@ -53,7 +74,7 @@ DEFAULT_RADAR_RULE_CONFIG: dict[str, Any] = {
         "pullback": {
             "min_pullback_from_high": 0.04,
             "max_retracement_ratio": 0.65,
-            "max_pullback_volume_ratio": 0.75,
+            "max_pullback_volume_ratio": 1.0,
             "max_oi_drawdown_from_peak": 0.15,
         },
         "p2": {

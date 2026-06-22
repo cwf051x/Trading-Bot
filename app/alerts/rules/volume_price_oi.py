@@ -24,6 +24,8 @@ class VolumePriceOIRule(AlertRule):
         return {"5m"}
 
     def evaluate(self, metrics: MarketMetrics, state: dict[str, Any]) -> list[AlertRuleResult]:
+        if not bool(self.settings.radar_rule_config.get("volume_price_oi", {}).get("enabled", True)):
+            return []
         result = self._volume_price_oi_resonance(metrics)
         return [result] if result else []
 
@@ -35,12 +37,16 @@ class VolumePriceOIRule(AlertRule):
         stats = metrics.resonance
         if stats is None:
             return None
+        config = self.settings.radar_rule_config["volume_price_oi"]
+        l1_config = config["l1"]
+        l2_config = config["l2"]
+        l3_config = config["l3"]
         l3 = (
-            stats.price_change_60m > 0.20
+            stats.price_change_60m > l3_config["price_change_60m"]
             and stats.rsi6 is not None
-            and stats.rsi6 > 85
-            and stats.ma25_deviation > 0.10
-            and stats.oi_change_60m > 0.20
+            and stats.rsi6 > l3_config["rsi6"]
+            and stats.ma25_deviation > l3_config["ma25_deviation"]
+            and stats.oi_change_60m > l3_config["oi_change_60m"]
             and (stats.long_upper_wick or stats.consecutive_red_5m)
         )
         if l3:
@@ -55,11 +61,11 @@ class VolumePriceOIRule(AlertRule):
                 metadata={"resonance_level": "L3", "auto_paper": False},
             )
         l2 = (
-            stats.price_change_30m > 0.06
-            and stats.price_change_60m > 0.10
-            and stats.bullish_5m_count_6 >= 4
-            and stats.volume_continuity >= 4
-            and stats.oi_change_30m > 0.08
+            stats.price_change_30m > l2_config["price_change_30m"]
+            and stats.price_change_60m > l2_config["price_change_60m"]
+            and stats.bullish_5m_count_6 >= l2_config["bullish_5m_count_6"]
+            and stats.volume_continuity >= l2_config["volume_continuity"]
+            and stats.oi_change_30m > l2_config["oi_change_30m"]
             and metrics.price > stats.ma7 > stats.ma25
         )
         if l2:
@@ -74,9 +80,9 @@ class VolumePriceOIRule(AlertRule):
                 metadata={"resonance_level": "L2", "auto_paper": True},
             )
         l1 = (
-            stats.price_change_15m > 0.03
-            and stats.volume_ratio > 2
-            and stats.oi_change_15m > 0.03
+            stats.price_change_15m > l1_config["price_change_15m"]
+            and stats.volume_ratio > l1_config["volume_ratio"]
+            and stats.oi_change_15m > l1_config["oi_change_15m"]
             and metrics.price > stats.ma7
             and metrics.price > stats.ma25
         )
@@ -92,4 +98,3 @@ class VolumePriceOIRule(AlertRule):
                 metadata={"resonance_level": "L1", "auto_paper": False},
             )
         return None
-

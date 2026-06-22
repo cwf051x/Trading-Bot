@@ -113,9 +113,7 @@ class MarketAlertRadar:
                             logger.info("Alert %s %s ignored because score %s is below store threshold", alert.symbol, alert.alert_type.value, alert.score)
                             continue
                         symbol_alerts.append(alert)
-                    symbol_winner = self._select_symbol_winner(symbol_alerts)
-                    if symbol_winner:
-                        cycle_candidates.append(symbol_winner)
+                    cycle_candidates.extend(self._select_symbol_family_winners(symbol_alerts))
             for alert in self._select_cycle_alerts(cycle_candidates):
                 with profiler.measure("cooldown_check"):
                     should_record = self.state.should_record(alert)
@@ -211,6 +209,19 @@ class MarketAlertRadar:
             return None
         return max(alerts, key=self._alert_rank)
 
+    def _select_symbol_family_winners(self, alerts: list[AlertSignal]) -> list[AlertSignal]:
+        """Select one winner per rule family for a symbol in one cycle.
+        同一交易对每个规则家族保留一条，避免短线共振盖掉趋势/二波观察。
+        """
+
+        winners: dict[str, AlertSignal] = {}
+        for alert in alerts:
+            family = self._alert_family(alert.alert_type)
+            current = winners.get(family)
+            if current is None or self._alert_rank(alert) > self._alert_rank(current):
+                winners[family] = alert
+        return sorted(winners.values(), key=self._alert_rank, reverse=True)
+
     def _select_cycle_alerts(self, alerts: list[AlertSignal]) -> list[AlertSignal]:
         """Select the highest-quality alerts allowed for one scan cycle.
         从一轮扫描中选出允许入库的最高质量提醒。
@@ -229,6 +240,20 @@ class MarketAlertRadar:
 
         level_rank = {AlertLevel.A: 3, AlertLevel.B: 2, AlertLevel.C: 1}.get(alert.level, 0)
         return (level_rank, ALERT_NOTIFICATION_PRIORITY[alert.alert_type], alert.score)
+
+    @staticmethod
+    def _alert_family(alert_type: AlertType) -> str:
+        """Map alert types to independent rule families.
+        将提醒类型映射到独立规则家族，用于同币多雷达并行观察。
+        """
+
+        if alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE:
+            return "volume_price_oi"
+        if alert_type in {AlertType.HOURLY_TREND_T1, AlertType.HOURLY_TREND_T2, AlertType.HOURLY_TREND_T3, AlertType.HOURLY_TREND_T4}:
+            return "hourly_trend"
+        if alert_type in {AlertType.PUMP_PULLBACK_P1, AlertType.PUMP_PULLBACK_P2, AlertType.PUMP_PULLBACK_P3, AlertType.PUMP_PULLBACK_P4}:
+            return "pump_pullback_second_wave"
+        return "legacy_momentum"
 
     def _build_alert(
         self,

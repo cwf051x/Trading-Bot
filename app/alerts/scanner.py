@@ -148,6 +148,7 @@ class MarketScanner:
                 continue
             metrics_rows.append(metrics)
         self._remember_hot_symbols(strong_symbols, now=now)
+        self._profile_rule_diagnostics(metrics_rows)
         profiler.set_meta(
             metrics=len(metrics_rows),
             strong_candidate_symbols_count=len(strong_symbols),
@@ -211,14 +212,33 @@ class MarketScanner:
         生成本轮需要深度拉取 K 线的候选池。
         """
 
-        candidate_top_n = max(1, int(getattr(self.settings, "alert_candidate_top_n", 50)))
+        candidate_top_n = max(1, int(getattr(self.settings, "alert_candidate_top_n", 80)))
+        gainers_top_n = max(0, int(getattr(self.settings, "alert_candidate_gainers_top_n", min(30, candidate_top_n))))
+        volume_top_n = max(0, int(getattr(self.settings, "alert_candidate_volume_top_n", min(30, candidate_top_n))))
+        recent_top_n = max(0, int(getattr(self.settings, "alert_candidate_recent_change_top_n", min(30, candidate_top_n))))
         forced_symbols = parse_symbol_list(getattr(self.settings, "alert_watchlist", []))
         forced_symbols |= self._open_position_symbols()
         forced_symbols |= self._active_hot_symbols(now)
+        by_gainers = sorted(eligible, key=lambda ticker: float(ticker.get("percentage") or 0.0), reverse=True)
+        by_volume = sorted(eligible, key=lambda ticker: float(ticker.get("quote_volume") or ticker.get("quoteVolume") or 0.0), reverse=True)
+        by_recent = sorted(eligible, key=self._candidate_recent_change, reverse=True)
         scored = sorted(eligible, key=self._candidate_rank, reverse=True)
         selected: dict[str, dict[str, Any]] = {}
-        for ticker in scored[:candidate_top_n]:
-            selected[ticker["symbol"]] = ticker
+
+        def add_bucket(rows: list[dict[str, Any]], limit: int) -> None:
+            """Add one ranked candidate bucket while respecting scan budget.
+            加入单个候选桶，同时控制深扫总预算。
+            """
+
+            for ticker in rows[:limit]:
+                if len(selected) >= candidate_top_n:
+                    return
+                selected[ticker["symbol"]] = ticker
+
+        add_bucket(by_gainers, gainers_top_n)
+        add_bucket(by_volume, volume_top_n)
+        add_bucket(by_recent, recent_top_n)
+        add_bucket(scored, candidate_top_n)
         for ticker in eligible:
             if ticker["symbol"] in forced_symbols:
                 selected[ticker["symbol"]] = ticker
@@ -237,6 +257,17 @@ class MarketScanner:
         previous_price = float(previous.get("last") or previous.get("close") or 0.0) if previous else 0.0
         recent_change = pct_change(previous_price, last) if previous_price and last else 0.0
         return (percentage + recent_change * 100, quote_volume, last)
+
+    def _candidate_recent_change(self, ticker: dict[str, Any]) -> float:
+        """Return short-term ticker-to-ticker change for candidate bucketing.
+        返回两轮 ticker 之间的短期涨幅，用来捕捉刚启动但 24h 排名未靠前的币。
+        """
+
+        symbol = str(ticker.get("symbol") or "")
+        last = float(ticker.get("last") or ticker.get("close") or 0.0)
+        previous = self.ticker_cache.get(symbol, {}).get("data", {})
+        previous_price = float(previous.get("last") or previous.get("close") or 0.0) if previous else 0.0
+        return pct_change(previous_price, last) if previous_price and last else 0.0
 
     def _update_ticker_cache(self, tickers: list[dict[str, Any]], now: float) -> None:
         """Store latest ticker rows for next-cycle recent change scoring.
@@ -690,3 +721,53 @@ class MarketScanner:
             return
         samples = "; ".join(self._oi_failures[:5])
         logger.warning("OI history fetch failed for %s/%s symbols; samples: %s", len(self._oi_failures), total_symbols, samples)
+
+    def _profile_rule_diagnostics(self, metrics_rows: list[Any]) -> None:
+        """Add rule gate counts to profiling for hit-rate debugging.
+        将规则闸口计数写入 profiling，用于判断低命中是漏扫还是条件过严。
+        """
+
+        if not self._profiler:
+            return
+        resonance_rows = [metrics for metrics in metrics_rows if getattr(metrics, "resonance", None) is not None]
+        trend_rows = [metrics for metrics in metrics_rows if getattr(metrics, "trend", None) is not None]
+        pump_rows = [metrics for metrics in metrics_rows if getattr(metrics, "pump_pullback", None) is not None]
+        pump_first_rows = [metrics for metrics in pump_rows if metrics.pump_pullback and metrics.pump_pullback.has_first_pump]
+        volume_config = self.settings.radar_rule_config.get("volume_price_oi", {})
+        l1 = volume_config.get("l1", {})
+        hourly_config = self.settings.radar_rule_config.get("hourly_trend", {})
+        t1 = hourly_config.get("t1", {})
+        t2 = hourly_config.get("t2", {})
+        pump_config = self.settings.radar_rule_config.get("pump_pullback_second_wave", {})
+        pullback = pump_config.get("pullback", {})
+        self._profiler.set_meta(
+            diagnostic_metrics=len(metrics_rows),
+            diagnostic_resonance_stats=len(resonance_rows),
+            diagnostic_resonance_l1_price=sum(1 for metrics in resonance_rows if metrics.resonance.price_change_15m > l1.get("price_change_15m", 0.03)),
+            diagnostic_resonance_l1_volume=sum(1 for metrics in resonance_rows if metrics.resonance.volume_ratio > l1.get("volume_ratio", 1.6)),
+            diagnostic_resonance_l1_oi=sum(1 for metrics in resonance_rows if metrics.resonance.oi_change_15m > l1.get("oi_change_15m", 0.03)),
+            diagnostic_trend_stats=len(trend_rows),
+            diagnostic_trend_t1_price=sum(1 for metrics in trend_rows if metrics.trend.price_change_6h > t1.get("price_change_6h", 0.08)),
+            diagnostic_trend_t1_oi=sum(1 for metrics in trend_rows if metrics.trend.oi_change_6h > t1.get("oi_change_6h", 0.08)),
+            diagnostic_trend_t2_price=sum(1 for metrics in trend_rows if metrics.trend.price_change_12h > t2.get("price_change_12h", 0.20)),
+            diagnostic_trend_t2_oi=sum(1 for metrics in trend_rows if metrics.trend.oi_change_12h > t2.get("oi_change_12h", 0.15)),
+            diagnostic_pump_stats=len(pump_rows),
+            diagnostic_pump_has_first_pump=len(pump_first_rows),
+            diagnostic_pump_healthy_pullback=sum(1 for metrics in pump_first_rows if self._is_diagnostic_healthy_pullback(metrics.pump_pullback, pullback)),
+        )
+
+    @staticmethod
+    def _is_diagnostic_healthy_pullback(stats: Any, pullback: dict[str, Any]) -> bool:
+        """Mirror the P1 healthy-pullback gate for diagnostics only.
+        仅用于诊断复刻 P1 健康回调闸口，避免影响真实规则判断。
+        """
+
+        return (
+            stats.pullback_from_high >= pullback.get("min_pullback_from_high", 0.04)
+            and stats.retracement_ratio <= pullback.get("max_retracement_ratio", 0.65)
+            and stats.pullback_volume_ratio <= pullback.get("max_pullback_volume_ratio", 1.0)
+            and stats.oi_drawdown_from_peak <= pullback.get("max_oi_drawdown_from_peak", 0.15)
+            and stats.price_above_pump_start
+            and stats.price_above_1h_ma25
+            and stats.price_above_1h_ma99
+        )
