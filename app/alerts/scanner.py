@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import logging
-from threading import Lock
 import time
 from typing import Any, Callable, Iterable, TypeVar
 
+from app.alerts.alert_rules import AlertRuleEngine
 from app.alerts.profiling import CycleProfiler
 from app.alerts.rule_config import load_radar_rule_config
+from app.data.market_data_service import MarketDataService
 from app.data.market_snapshot import aggregate_klines, build_market_metrics, compute_timeframe_stats, pct_change
 from app.data.symbol_universe import filter_symbol_universe, normalize_symbol, parse_symbol_list
 from app.exchange.binance import BinanceFuturesClient, Kline
@@ -20,6 +21,26 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 R = TypeVar("R")
+
+
+@dataclass(frozen=True)
+class ScanPlan:
+    """Data requirements for the currently enabled radar rules.
+    当前启用雷达规则所需的数据采集计划。
+    """
+
+    timeframes: set[str]
+    oi_periods: set[str]
+    requires_funding_rate: bool = False
+
+    @property
+    def fast_timeframes(self) -> set[str]:
+        """Return fast K-line frames needed during candidate strengthening.
+        返回强候选初筛阶段需要的快周期 K 线。
+        """
+
+        # The 5m frame is also the cheap prefilter for OI refresh priority.
+        return (self.timeframes & {"1m", "3m", "5m"}) | ({"5m"} if self.oi_periods else set())
 
 
 class MarketScanner:
@@ -34,17 +55,13 @@ class MarketScanner:
         self._oi_failures: list[str] = []
         self._profiler: CycleProfiler | None = None
         self.last_profile = CycleProfiler()
-        self.candle_cache: dict[tuple[str, str], dict[str, Any]] = {}
-        self.oi_cache: dict[tuple[str, str], dict[str, Any]] = {}
-        self.funding_cache: dict[str, dict[str, Any]] = {}
+        self.market_data = MarketDataService(client, settings)
+        self.candle_cache = self.market_data.candle_cache
+        self.oi_cache = self.market_data.oi_cache
+        self.funding_cache = self.market_data.funding_cache
         self.ticker_cache: dict[str, dict[str, Any]] = {}
         self.hot_symbols: dict[str, float] = {}
-        self._cache_stats: dict[str, int] = {}
-        self._cache_lock = Lock()
-        self._stats_lock = Lock()
-        self._throttle_lock = Lock()
-        self._last_fetch_started_at = 0.0
-        self._rate_limit_backoff_until = 0.0
+        self._cache_stats = self.market_data.cache_stats
         if not hasattr(self.settings, "radar_rule_config"):
             object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
 
@@ -84,8 +101,11 @@ class MarketScanner:
             "funding_cache_misses": 0,
             "funding_fetch_count": 0,
         }
+        self.market_data.start_cycle(profiler, self._cache_stats)
+        self._oi_failures = self.market_data.oi_failures
         now = time.time()
         fetch_concurrency = self._fetch_concurrency()
+        scan_plan = self._build_scan_plan()
         forced_symbols = parse_symbol_list(getattr(self.settings, "alert_watchlist", [])) | self._open_position_symbols() | self._active_hot_symbols(now)
         with profiler.measure("fetch_24h_tickers"):
             tickers = self.client.get_24h_tickers()
@@ -99,37 +119,38 @@ class MarketScanner:
             )
             candidate_rows = self._select_candidate_rows(eligible, now=now)
             self._cache_stats["skipped_by_not_candidate"] = max(0, len(eligible) - len(candidate_rows))
-            profiler.set_meta(symbols=len(eligible), candidate_symbols_count=len(candidate_rows), skipped_by_not_candidate=self._cache_stats["skipped_by_not_candidate"], fetch_concurrency=fetch_concurrency)
+            profiler.set_meta(
+                symbols=len(eligible),
+                candidate_symbols_count=len(candidate_rows),
+                skipped_by_not_candidate=self._cache_stats["skipped_by_not_candidate"],
+                fetch_concurrency=fetch_concurrency,
+                scan_timeframes=",".join(sorted(scan_plan.timeframes)),
+                scan_oi_periods=",".join(sorted(scan_plan.oi_periods)),
+                scan_requires_funding=int(scan_plan.requires_funding_rate),
+            )
             self._update_ticker_cache(eligible, now=now)
         self._oi_failures = []
         btc_klines = self._get_klines_safe("BTC/USDT:USDT", "15m", 2)
         btc_15m_change = pct_change(btc_klines[0].open, btc_klines[-1].close) if len(btc_klines) >= 2 else 0.0
-        fast_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), self._collect_fast_klines)
+        fast_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_fast_klines(symbol, scan_plan))
         fast_klines_by_symbol = {symbol: klines for symbol, klines in fast_pairs}
         strong_symbols = self._select_strong_candidate_symbols(candidate_rows, fast_klines_by_symbol)
-        candidate_klines_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {})))
+        candidate_klines_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_candidate_klines(symbol, fast_klines_by_symbol.get(symbol, {}), scan_plan))
         candidate_klines_by_symbol = {symbol: klines for symbol, klines in candidate_klines_pairs}
-        oi_refresh_symbols = self._select_oi_refresh_symbols(strong_symbols, fast_klines_by_symbol, now=now)
-        hourly_trend_enabled = bool(self.settings.radar_rule_config["hourly_trend"]["enabled"])
-        pump_pullback_enabled = bool(self.settings.radar_rule_config["pump_pullback_second_wave"]["enabled"])
-        oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="5m")
-        hourly_oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="1h") if hourly_trend_enabled else {}
-        pump_oi_history_by_symbol = self._cached_oi_histories(strong_symbols, period="15m") if pump_pullback_enabled else {}
-        oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="5m", force_refresh=True))
-        hourly_oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="1h", force_refresh=True)) if hourly_trend_enabled else []
-        pump_oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol: self._get_open_interest_history_safe(symbol, period="15m", force_refresh=True, limit=100)) if pump_pullback_enabled else []
-        funding_pairs = self._run_limited(sorted(strong_symbols), self._get_funding_rate_safe) if hourly_trend_enabled else []
-        oi_history_by_symbol.update({symbol: history for symbol, history in oi_pairs})
-        hourly_oi_history_by_symbol.update({symbol: history for symbol, history in hourly_oi_pairs})
-        pump_oi_history_by_symbol.update({symbol: history for symbol, history in pump_oi_pairs})
+        oi_refresh_symbols = self._select_oi_refresh_symbols(strong_symbols, fast_klines_by_symbol, now=now, oi_periods=scan_plan.oi_periods)
+        oi_histories_by_period = {period: self._cached_oi_histories(strong_symbols, period=period) for period in scan_plan.oi_periods}
+        for period in sorted(scan_plan.oi_periods):
+            oi_pairs = self._run_limited(sorted(oi_refresh_symbols), lambda symbol, period=period: self._get_open_interest_history_safe(symbol, period=period, force_refresh=True, limit=self._oi_history_limit(period)))
+            oi_histories_by_period[period].update({symbol: history for symbol, history in oi_pairs})
+        funding_pairs = self._run_limited(sorted(strong_symbols), self._get_funding_rate_safe) if scan_plan.requires_funding_rate else []
         funding_rate_by_symbol = {symbol: funding_rate for symbol, funding_rate in funding_pairs}
         metrics_rows = []
         for ticker in candidate_rows:
             symbol = ticker["symbol"]
             klines = candidate_klines_by_symbol.get(symbol, {})
-            oi_history = oi_history_by_symbol.get(symbol, [])
-            trend_oi_history = hourly_oi_history_by_symbol.get(symbol, [])
-            pump_oi_history_15m = pump_oi_history_by_symbol.get(symbol, [])
+            oi_history = oi_histories_by_period.get("5m", {}).get(symbol, [])
+            trend_oi_history = oi_histories_by_period.get("1h", {}).get(symbol, [])
+            pump_oi_history_15m = oi_histories_by_period.get("15m", {}).get(symbol, [])
             funding_rate = funding_rate_by_symbol.get(symbol)
             with profiler.measure("build_metrics"):
                 metrics = build_market_metrics(
@@ -142,6 +163,7 @@ class MarketScanner:
                     trend_oi_history=trend_oi_history,
                     pump_oi_history_15m=pump_oi_history_15m,
                     radar_rule_config=self.settings.radar_rule_config,
+                    required_timeframes=scan_plan.timeframes,
                 )
             if metrics is None:
                 logger.info("Skipping %s because market data is insufficient", symbol)
@@ -160,52 +182,43 @@ class MarketScanner:
         self._log_oi_failure_summary(total_symbols=len(strong_symbols))
         return metrics_rows
 
+    def _build_scan_plan(self) -> ScanPlan:
+        """Aggregate data needs from enabled pluggable radar rules.
+        汇总启用规则声明的数据需求，避免新增规则时默认拉取所有周期。
+        """
+
+        timeframes: set[str] = set()
+        oi_periods: set[str] = set()
+        requires_funding_rate = False
+        for rule in AlertRuleEngine(self.settings).rules:
+            rule_config = self.settings.radar_rule_config.get(rule.name, {})
+            if rule_config and not bool(rule_config.get("enabled", True)):
+                continue
+            timeframes |= rule.required_timeframes()
+            oi_periods |= rule.required_oi_periods()
+            requires_funding_rate = requires_funding_rate or rule.requires_funding_rate()
+        return ScanPlan(timeframes=timeframes or {"5m"}, oi_periods=oi_periods, requires_funding_rate=requires_funding_rate)
+
     def _fetch_concurrency(self) -> int:
         """Return bounded fetch concurrency for exchange calls.
         返回交易所请求并发上限，避免无限并发触发限流。
         """
 
-        if self._rate_limit_backoff_active():
-            return max(1, int(getattr(self.settings, "alert_rate_limit_backoff_concurrency", 2)))
-        return max(1, int(getattr(self.settings, "alert_fetch_concurrency", 8)))
+        return self.market_data.fetch_concurrency()
 
     def _run_limited(self, items: Iterable[T], worker: Callable[[T], R]) -> list[tuple[T, R]]:
         """Run independent fetch tasks with a conservative worker limit.
         用受限线程池运行互相独立的行情请求。
         """
 
-        item_list = list(items)
-        if not item_list:
-            return []
-        max_workers = min(self._fetch_concurrency(), len(item_list))
-        if max_workers <= 1:
-            return [(item, worker(item)) for item in item_list]
-        results: list[tuple[int, T, R]] = []
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="radar-fetch") as executor:
-            futures = {executor.submit(worker, item): (index, item) for index, item in enumerate(item_list)}
-            for future in as_completed(futures):
-                index, item = futures[future]
-                results.append((index, item, future.result()))
-        return [(item, result) for _, item, result in sorted(results, key=lambda row: row[0])]
+        return self.market_data.run_limited(items, worker)
 
     def _throttle_fetch(self) -> None:
         """Pace exchange request starts across worker threads.
         控制多线程请求的启动间隔，避免并发瞬间触发交易所限流。
         """
 
-        if self._rate_limit_backoff_active():
-            min_interval = max(0.0, float(getattr(self.settings, "alert_rate_limit_backoff_min_interval_seconds", 0.5)))
-        else:
-            min_interval = max(0.0, float(getattr(self.settings, "alert_fetch_min_interval_seconds", 0.08)))
-        if min_interval <= 0:
-            return
-        with self._throttle_lock:
-            now = time.time()
-            wait_seconds = self._last_fetch_started_at + min_interval - now
-            if wait_seconds > 0:
-                time.sleep(wait_seconds)
-                now = time.time()
-            self._last_fetch_started_at = now
+        self.market_data.throttle_fetch()
 
     def _select_candidate_rows(self, eligible: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
         """Return rows that deserve deep K-line scanning this cycle.
@@ -277,8 +290,7 @@ class MarketScanner:
         for ticker in tickers:
             symbol = str(ticker.get("symbol") or "")
             if symbol:
-                with self._cache_lock:
-                    self.ticker_cache[symbol] = {"data": dict(ticker), "updated_at": now}
+                self.ticker_cache[symbol] = {"data": dict(ticker), "updated_at": now}
 
     def _open_position_symbols(self) -> set[str]:
         """Return open position symbols when storage is available.
@@ -315,33 +327,29 @@ class MarketScanner:
         for symbol in symbols:
             self.hot_symbols[symbol] = now
 
-    def _collect_fast_klines(self, symbol: str) -> dict[str, list[Kline]]:
+    def _collect_fast_klines(self, symbol: str, scan_plan: ScanPlan) -> dict[str, list[Kline]]:
         """Fetch fast timeframes used for candidate strengthening.
         拉取用于强候选初筛的快周期 K 线。
         """
 
-        return {
-            "1m": self._get_klines_cached(symbol, "1m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0))),
-            "3m": self._get_klines_cached(symbol, "3m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0))),
-            "5m": self._get_klines_cached(symbol, "5m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0))),
-        }
+        klines: dict[str, list[Kline]] = {}
+        for timeframe in sorted(scan_plan.fast_timeframes):
+            klines[timeframe] = self._get_klines_cached(symbol, timeframe, 120, ttl_seconds=self._kline_ttl_seconds(timeframe))
+        if "3m" in scan_plan.fast_timeframes and not klines.get("3m") and klines.get("1m"):
+            klines["3m"] = aggregate_klines(klines["1m"], 3)[-120:]
+        return klines
 
-    def _collect_candidate_klines(self, symbol: str, fast_klines: dict[str, list[Kline]]) -> dict[str, list[Kline]]:
+    def _collect_candidate_klines(self, symbol: str, fast_klines: dict[str, list[Kline]], scan_plan: ScanPlan) -> dict[str, list[Kline]]:
         """Collect all timeframes for one selected candidate.
         为候选币收集构建指标所需的全部周期。
         """
 
-        one_minute = fast_klines.get("1m", [])
-        three_minute = fast_klines.get("3m", [])
-        if not three_minute and one_minute:
-            three_minute = aggregate_klines(one_minute, 3)[-120:]
-        return {
-            "1m": one_minute,
-            "3m": three_minute,
-            "5m": fast_klines.get("5m", []),
-            "15m": self._get_klines_cached(symbol, "15m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_medium_ttl_seconds", 180))),
-            "1h": self._get_klines_cached(symbol, "1h", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_slow_ttl_seconds", 600))),
-        }
+        klines = {timeframe: list(rows) for timeframe, rows in fast_klines.items() if timeframe in scan_plan.timeframes}
+        for timeframe in sorted(scan_plan.timeframes - set(klines)):
+            klines[timeframe] = self._get_klines_cached(symbol, timeframe, 120, ttl_seconds=self._kline_ttl_seconds(timeframe))
+        if "3m" in scan_plan.timeframes and not klines.get("3m") and klines.get("1m"):
+            klines["3m"] = aggregate_klines(klines["1m"], 3)[-120:]
+        return klines
 
     def _select_strong_candidate_symbols(self, candidate_rows: list[dict[str, Any]], fast_klines_by_symbol: dict[str, dict[str, list[Kline]]]) -> set[str]:
         """Pick the smaller OI fetch set from fast K-line behavior.
@@ -365,21 +373,27 @@ class MarketScanner:
             scores.append((score, symbol))
         return {symbol for _, symbol in sorted(scores, reverse=True)[:oi_top_n]}
 
-    def _select_oi_refresh_symbols(self, symbols: set[str], fast_klines_by_symbol: dict[str, dict[str, list[Kline]]], now: float) -> set[str]:
+    def _select_oi_refresh_symbols(self, symbols: set[str], fast_klines_by_symbol: dict[str, dict[str, list[Kline]]], now: float, oi_periods: set[str]) -> set[str]:
         """Choose a limited OI refresh set by tier and cache freshness.
         按热度分层和 TTL 选择本轮真正请求 OI 的币种。
         """
 
+        if not oi_periods:
+            return set()
         refresh_candidates: list[tuple[float, str]] = []
         for symbol in symbols:
             tier, score = self._oi_refresh_tier(symbol, fast_klines_by_symbol.get(symbol, {}))
             self._increment_cache_stat(f"oi_{tier}_count")
-            cached = self.oi_cache.get((symbol, "5m"))
             ttl = self._oi_ttl_seconds(tier)
-            if cached and ttl > 0 and now - float(cached["updated_at"]) < ttl:
-                self._increment_cache_stat("oi_cache_hits")
-                self._increment_cache_stat("oi_skipped_by_ttl")
-                self._increment_cache_stat("skipped_by_ttl")
+            fresh_periods = 0
+            for period in oi_periods:
+                cached = self.oi_cache.get((symbol, period))
+                if cached and ttl > 0 and now - float(cached["updated_at"]) < ttl:
+                    fresh_periods += 1
+            if fresh_periods == len(oi_periods):
+                self._increment_cache_stat("oi_cache_hits", fresh_periods)
+                self._increment_cache_stat("oi_skipped_by_ttl", fresh_periods)
+                self._increment_cache_stat("skipped_by_ttl", fresh_periods)
                 continue
             refresh_candidates.append((score, symbol))
         self._increment_cache_stat("oi_refresh_needed_count", len(refresh_candidates))
@@ -389,7 +403,7 @@ class MarketScanner:
         if skipped:
             self._increment_cache_stat("oi_refresh_skipped_by_limit", skipped)
             for _, symbol in sorted(refresh_candidates, reverse=True)[max_refresh:]:
-                if (symbol, "5m") in self.oi_cache:
+                if any((symbol, period) in self.oi_cache for period in oi_periods):
                     self._increment_cache_stat("oi_stale_used_count")
         return selected
 
@@ -420,6 +434,26 @@ class MarketScanner:
             return int(getattr(self.settings, "alert_oi_warm_ttl_seconds", 90))
         return int(getattr(self.settings, "alert_oi_cold_ttl_seconds", 600))
 
+    def _oi_history_limit(self, period: str) -> int:
+        """Return enough OI history for the rules using this period.
+        按 OI 周期返回足够的历史长度，二波规则的 15m 首波识别需要更长窗口。
+        """
+
+        if period == "15m":
+            return 100
+        return 30
+
+    def _kline_ttl_seconds(self, timeframe: str) -> int:
+        """Return cache TTL by candle speed.
+        按 K 线周期返回缓存 TTL，让采集计划可以统一调度不同周期。
+        """
+
+        if timeframe in {"1m", "3m", "5m"}:
+            return int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0))
+        if timeframe == "15m":
+            return int(getattr(self.settings, "alert_kline_medium_ttl_seconds", 180))
+        return int(getattr(self.settings, "alert_kline_slow_ttl_seconds", 600))
+
     def _cached_oi_histories(self, symbols: set[str], period: str = "5m") -> dict[str, list[Any]]:
         """Return cached OI histories for symbols that are not refreshed.
         未刷新 OI 的币种优先沿用缓存，避免信号输入直接断档。
@@ -437,16 +471,16 @@ class MarketScanner:
         采集单个交易对所需的全部周期 K 线。
         """
 
-        one_minute = self._get_klines_cached(symbol, "1m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0)))
-        three_minute = self._get_klines_cached(symbol, "3m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0)))
+        one_minute = self._get_klines_cached(symbol, "1m", 120, ttl_seconds=self._kline_ttl_seconds("1m"))
+        three_minute = self._get_klines_cached(symbol, "3m", 120, ttl_seconds=self._kline_ttl_seconds("3m"))
         if not three_minute and one_minute:
             three_minute = aggregate_klines(one_minute, 3)[-120:]
         return {
             "1m": one_minute,
             "3m": three_minute,
-            "5m": self._get_klines_cached(symbol, "5m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_fast_ttl_seconds", 0))),
-            "15m": self._get_klines_cached(symbol, "15m", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_medium_ttl_seconds", 180))),
-            "1h": self._get_klines_cached(symbol, "1h", 120, ttl_seconds=int(getattr(self.settings, "alert_kline_slow_ttl_seconds", 600))),
+            "5m": self._get_klines_cached(symbol, "5m", 120, ttl_seconds=self._kline_ttl_seconds("5m")),
+            "15m": self._get_klines_cached(symbol, "15m", 120, ttl_seconds=self._kline_ttl_seconds("15m")),
+            "1h": self._get_klines_cached(symbol, "1h", 120, ttl_seconds=self._kline_ttl_seconds("1h")),
         }
 
     def _get_klines_cached(self, symbol: str, timeframe: str, limit: int, ttl_seconds: int) -> list[Kline]:
@@ -454,97 +488,42 @@ class MarketScanner:
         缓存可用时只刷新最近几根 K 线，减少重复拉取完整历史。
         """
 
-        cache_key = (symbol, timeframe)
-        now = time.time()
-        cached = self.candle_cache.get(cache_key)
-        if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
-            self._increment_cache_stat("kline_cache_hits")
-            self._increment_cache_stat("skipped_by_ttl")
-            self._increment_cache_stat("kline_cache_reused_count")
-            return list(cached["data"])
-        self._increment_cache_stat("kline_cache_misses")
-        data, full_refresh = self._refresh_klines(symbol, timeframe, limit, now, cached)
-        if data:
-            with self._cache_lock:
-                if full_refresh or cached is None:
-                    full_refresh_at = now
-                else:
-                    full_refresh_at = float(cached.get("full_refresh_at") or cached.get("updated_at") or now)
-                self.candle_cache[cache_key] = {"data": list(data), "updated_at": now, "full_refresh_at": full_refresh_at}
-        return data
+        return self.market_data.get_klines_cached(symbol, timeframe, limit, ttl_seconds)
 
     def _refresh_klines(self, symbol: str, timeframe: str, limit: int, now: float, cached: dict[str, Any] | None) -> tuple[list[Kline], bool]:
         """Choose full or incremental refresh for one K-line cache entry.
         根据缓存状态决定完整刷新还是只刷新尾部 K 线。
         """
 
-        incremental_enabled = bool(getattr(self.settings, "alert_incremental_klines_enabled", True))
-        if not incremental_enabled or cached is None:
-            self._increment_cache_stat("kline_full_refresh_count")
-            return self._get_klines_safe(symbol, timeframe, limit), True
-        cached_data = list(cached.get("data") or [])
-        if self._kline_cache_invalid(cached_data, timeframe):
-            self._increment_cache_stat("kline_cache_invalid_count")
-            self._increment_cache_stat("kline_full_refresh_count")
-            return self._get_klines_safe(symbol, timeframe, limit), True
-        if self._kline_full_refresh_due(cached, now):
-            self._increment_cache_stat("kline_full_refresh_due_count")
-            self._increment_cache_stat("kline_full_refresh_count")
-            return self._get_klines_safe(symbol, timeframe, limit), True
-
-        tail_limit = max(1, int(getattr(self.settings, "alert_incremental_kline_tail_limit", 3)))
-        self._increment_cache_stat("kline_incremental_refresh_count")
-        fresh_tail = self._get_klines_safe(symbol, timeframe, tail_limit)
-        if not fresh_tail:
-            self._increment_cache_stat("kline_cache_reused_count")
-            return cached_data[-self._kline_cache_max_length(limit) :], False
-        self._increment_cache_stat("kline_incremental_merge_count")
-        return self._merge_klines(cached_data, fresh_tail, self._kline_cache_max_length(limit)), False
+        return self.market_data._refresh_klines(symbol, timeframe, limit, now, cached)
 
     def _merge_klines(self, cached: list[Kline], fresh: list[Kline], max_length: int) -> list[Kline]:
         """Merge K-lines by Binance candle open timestamp.
         使用 K 线 open timestamp 去重，保持 build_metrics 输入结构不变。
         """
 
-        by_timestamp = {item.timestamp: item for item in cached}
-        for item in fresh:
-            by_timestamp[item.timestamp] = item
-        merged = [by_timestamp[timestamp] for timestamp in sorted(by_timestamp)]
-        return merged[-max(1, max_length) :]
+        return self.market_data._merge_klines(cached, fresh, max_length)
 
     def _kline_cache_invalid(self, data: list[Kline], timeframe: str) -> bool:
         """Detect missing or obviously broken candle sequences.
         发现缓存为空、乱序或大时间断层时退回完整刷新。
         """
 
-        if not data:
-            return True
-        timestamps = [item.timestamp for item in data]
-        if timestamps != sorted(timestamps) or len(timestamps) != len(set(timestamps)):
-            return True
-        expected_gap = self.get_timeframe_seconds(timeframe) * 1000
-        if expected_gap <= 0:
-            return False
-        return any(current - previous > expected_gap * 2 for previous, current in zip(timestamps, timestamps[1:]))
+        return self.market_data._kline_cache_invalid(data, timeframe)
 
     def _kline_full_refresh_due(self, cached: dict[str, Any], now: float) -> bool:
         """Return whether the periodic full refresh interval has elapsed.
         定期完整刷新用于校正增量合并可能遗漏的历史修正。
         """
 
-        refresh_seconds = max(0, int(getattr(self.settings, "alert_full_kline_refresh_seconds", 1800)))
-        if refresh_seconds == 0:
-            return True
-        refreshed_at = float(cached.get("full_refresh_at") or cached.get("updated_at") or 0.0)
-        return now - refreshed_at >= refresh_seconds
+        return self.market_data._kline_full_refresh_due(cached, now)
 
     def _kline_cache_max_length(self, requested_limit: int) -> int:
         """Return bounded cache length while preserving enough indicator history.
         限制缓存长度，避免增量合并后内存无限增长。
         """
 
-        configured = int(getattr(self.settings, "alert_kline_cache_max_length", 200))
-        return max(requested_limit, configured)
+        return self.market_data._kline_cache_max_length(requested_limit)
 
     @staticmethod
     def get_timeframe_seconds(timeframe: str) -> int:
@@ -552,124 +531,42 @@ class MarketScanner:
         将 Binance 周期字符串转换为秒数，用于检测缓存时间断层。
         """
 
-        unit = timeframe[-1]
-        value = int(timeframe[:-1])
-        if unit == "m":
-            return value * 60
-        if unit == "h":
-            return value * 60 * 60
-        if unit == "d":
-            return value * 24 * 60 * 60
-        return 0
+        return MarketDataService.get_timeframe_seconds(timeframe)
 
     def _get_klines_safe(self, symbol: str, timeframe: str, limit: int) -> list[Kline]:
         """Fetch klines without crashing the full scan.
         获取 K 线，单个失败不导致整轮扫描崩溃。
         """
 
-        try:
-            if self._profiler:
-                with self._profiler.measure(f"fetch_klines_{timeframe}"):
-                    self._increment_cache_stat("kline_fetch_count")
-                    self._throttle_fetch()
-                    return self._closed_klines(self.client.get_klines(symbol, timeframe, limit=limit), timeframe)
-            self._increment_cache_stat("kline_fetch_count")
-            self._throttle_fetch()
-            return self._closed_klines(self.client.get_klines(symbol, timeframe, limit=limit), timeframe)
-        except Exception as exc:  # pragma: no cover - network dependent
-            self._handle_rate_limit_error(exc)
-            logger.warning("Failed to fetch %s %s klines: %s", symbol, timeframe, exc)
-            return []
+        return self.market_data.get_klines_safe(symbol, timeframe, limit)
 
     def _closed_klines(self, klines: list[Kline], timeframe: str) -> list[Kline]:
         """Drop Binance's still-forming latest candle before metrics use it.
         在计算指标前丢弃 Binance 返回的未收盘最新 K 线。
         """
 
-        if not klines:
-            return []
-        timeframe_ms = self.get_timeframe_seconds(timeframe) * 1000
-        if timeframe_ms <= 0:
-            return klines
-        now_ms = int(time.time() * 1000)
-        if klines[-1].timestamp + timeframe_ms > now_ms:
-            return klines[:-1]
-        return klines
+        return self.market_data._closed_klines(klines, timeframe)
 
     def _get_open_interest_history_safe(self, symbol: str, period: str = "5m", force_refresh: bool = False, limit: int = 30) -> list[Any]:
         """Fetch OI history without crashing the full scan.
         获取 OI 历史，单个失败不导致整轮扫描崩溃。
         """
 
-        try:
-            now = time.time()
-            ttl_seconds = int(getattr(self.settings, "alert_oi_ttl_seconds", 60))
-            cache_key = (symbol, period)
-            cached = self.oi_cache.get(cache_key)
-            if not force_refresh and cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
-                self._increment_cache_stat("oi_cache_hits")
-                self._increment_cache_stat("skipped_by_ttl")
-                return list(cached["data"])
-            self._increment_cache_stat("oi_cache_misses")
-            if self._profiler:
-                with self._profiler.measure("fetch_open_interest"):
-                    self._increment_cache_stat("oi_fetch_count")
-                    self._throttle_fetch()
-                    data = self.client.get_open_interest_history(symbol, period=period, limit=limit)
-            else:
-                self._increment_cache_stat("oi_fetch_count")
-                self._throttle_fetch()
-                data = self.client.get_open_interest_history(symbol, period=period, limit=limit)
-            with self._cache_lock:
-                self.oi_cache[cache_key] = {"data": list(data), "updated_at": now}
-            return data
-        except Exception as exc:  # pragma: no cover - network dependent
-            self._handle_rate_limit_error(exc)
-            self._record_oi_failure(symbol, exc)
-            return []
+        return self.market_data.get_open_interest_history_safe(symbol, period=period, force_refresh=force_refresh, limit=limit)
 
     def _get_funding_rate_safe(self, symbol: str) -> float | None:
         """Fetch funding rate with a TTL cache.
         带 TTL 缓存获取资金费率，避免每轮重复请求。
         """
 
-        try:
-            now = time.time()
-            ttl_seconds = int(self.settings.radar_rule_config["hourly_trend"].get("funding_rate_ttl_seconds", getattr(self.settings, "alert_funding_rate_ttl_seconds", 900)))
-            cached = self.funding_cache.get(symbol)
-            if cached and ttl_seconds > 0 and now - float(cached["updated_at"]) < ttl_seconds:
-                self._increment_cache_stat("funding_cache_hits")
-                self._increment_cache_stat("skipped_by_ttl")
-                return cached["data"]
-            self._increment_cache_stat("funding_cache_misses")
-            if self._profiler:
-                with self._profiler.measure("fetch_funding_rate"):
-                    self._increment_cache_stat("funding_fetch_count")
-                    self._throttle_fetch()
-                    data = self.client.get_funding_rate(symbol)
-            else:
-                self._increment_cache_stat("funding_fetch_count")
-                self._throttle_fetch()
-                data = self.client.get_funding_rate(symbol)
-            with self._cache_lock:
-                self.funding_cache[symbol] = {"data": data, "updated_at": now}
-            return data
-        except Exception as exc:  # pragma: no cover - network dependent
-            self._handle_rate_limit_error(exc)
-            logger.debug("Failed to fetch %s funding rate: %s", symbol, exc)
-            return None
+        return self.market_data.get_funding_rate_safe(symbol)
 
     def _handle_rate_limit_error(self, exc: Exception) -> None:
         """Enter temporary backoff when Binance reports rate limiting.
         检测到 Binance 限流后临时降速，避免下一轮继续打满请求。
         """
 
-        if not self._is_rate_limit_error(exc):
-            return
-        backoff_seconds = max(1, int(getattr(self.settings, "alert_rate_limit_backoff_seconds", 120)))
-        with self._stats_lock:
-            self._cache_stats["rate_limited_count"] = self._cache_stats.get("rate_limited_count", 0) + 1
-        self._rate_limit_backoff_until = max(self._rate_limit_backoff_until, time.time() + backoff_seconds)
+        self.market_data.handle_rate_limit_error(exc)
 
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:
@@ -677,50 +574,42 @@ class MarketScanner:
         用字符串兼容 ccxt 与 requests 抛出的不同限流异常。
         """
 
-        message = str(exc).lower()
-        return "429" in message or "-1003" in message or "too many requests" in message
+        return MarketDataService.is_rate_limit_error(exc)
 
     def _rate_limit_backoff_active(self) -> bool:
         """Return whether rate-limit backoff is currently active.
         判断当前是否处于限流退避窗口。
         """
 
-        return self._rate_limit_backoff_remaining() > 0
+        return self.market_data.rate_limit_backoff_active()
 
     def _rate_limit_backoff_remaining(self) -> float:
         """Return remaining backoff seconds.
         返回限流退避剩余秒数，便于日志和测试观察。
         """
 
-        return max(0.0, self._rate_limit_backoff_until - time.time())
+        return self.market_data.rate_limit_backoff_remaining()
 
     def _record_oi_failure(self, symbol: str, exc: Exception) -> None:
         """Store per-symbol OI failures for one compact cycle summary.
         暂存单币种 OI 失败，用于本轮扫描结束后的汇总日志。
         """
 
-        detail = f"{symbol}: {exc}"
-        with self._stats_lock:
-            self._oi_failures.append(detail)
-        logger.debug("Failed to fetch %s OI history: %s", symbol, exc)
+        self.market_data.record_oi_failure(symbol, exc)
 
     def _increment_cache_stat(self, key: str, amount: int = 1) -> None:
         """Increment profiling counters safely across fetch worker threads.
         在线程池请求中安全累加 profiling 计数器。
         """
 
-        with self._stats_lock:
-            self._cache_stats[key] = self._cache_stats.get(key, 0) + amount
+        self.market_data.increment_cache_stat(key, amount)
 
     def _log_oi_failure_summary(self, total_symbols: int) -> None:
         """Log one OI failure summary instead of flooding warnings per symbol.
         用一条汇总日志替代每个币一条 WARNING，减少日志噪音。
         """
 
-        if not self._oi_failures:
-            return
-        samples = "; ".join(self._oi_failures[:5])
-        logger.warning("OI history fetch failed for %s/%s symbols; samples: %s", len(self._oi_failures), total_symbols, samples)
+        self.market_data.log_oi_failure_summary(total_symbols)
 
     def _profile_rule_diagnostics(self, metrics_rows: list[Any]) -> None:
         """Add rule gate counts to profiling for hit-rate debugging.

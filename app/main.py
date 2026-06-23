@@ -36,6 +36,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_telegram_notifiers(settings: Any) -> tuple[TelegramNotifier, TelegramNotifier]:
+    """Build separate Telegram clients for radar/system alerts and order flow.
+    构建雷达/系统通知与订单流水通知两个 Telegram 客户端，方便降低消息互相干扰。
+    """
+
+    alert_proxy = settings.telegram_proxy or settings.exchange_proxy
+    alert_notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, proxy=alert_proxy)
+    if not getattr(settings, "telegram_order_enabled", True):
+        return alert_notifier, TelegramNotifier()
+
+    # 未配置订单专用通道时回退到原通知通道，避免升级后静默丢失订单通知。
+    order_token = getattr(settings, "telegram_order_bot_token", "") or settings.telegram_bot_token
+    order_chat_id = getattr(settings, "telegram_order_chat_id", "") or settings.telegram_chat_id
+    order_proxy = getattr(settings, "telegram_order_proxy", "") or alert_proxy
+    return alert_notifier, TelegramNotifier(order_token, order_chat_id, proxy=order_proxy)
+
+
 def run_paper_cycle(
     client: BinanceFuturesClient,
     paper: PaperTradingEngine,
@@ -93,7 +110,7 @@ def run() -> None:
 
     storage = SQLiteStorage(settings.database_path)
     storage.initialize()
-    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, proxy=settings.telegram_proxy or settings.exchange_proxy)
+    notifier, order_notifier = build_telegram_notifiers(settings)
     notifier.notify_startup(mode.value)
 
     strategy = MomentumOIStrategy(
@@ -121,7 +138,7 @@ def run() -> None:
 
     if mode == RunMode.PAPER:
         client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy)
-        paper = PaperTradingEngine(storage=storage, notifier=notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+        paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
         while True:
             try:
                 run_paper_cycle(client, paper, strategy, risk_manager, notifier, settings)

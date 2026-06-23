@@ -446,6 +446,7 @@ def build_market_metrics(
     trend_oi_history: list[OpenInterestPoint] | None = None,
     pump_oi_history_15m: list[OpenInterestPoint] | None = None,
     radar_rule_config: dict[str, Any] | None = None,
+    required_timeframes: set[str] | None = None,
 ) -> MarketMetrics | None:
     """Build derived metrics for one symbol, returning None when data is insufficient.
     为单个交易对构建派生指标；数据不足时返回 None。
@@ -455,9 +456,18 @@ def build_market_metrics(
     price_value = ticker.get("last") or ticker.get("close")
     if not symbol or price_value is None:
         return None
-    required = ["1m", "3m", "5m", "15m", "1h"]
+    required = required_timeframes or {"1m", "3m", "5m", "15m", "1h"}
     if any(len(klines_by_timeframe.get(timeframe, [])) < 5 for timeframe in required):
         return None
+    klines_1m = klines_by_timeframe.get("1m", [])
+    klines_3m = klines_by_timeframe.get("3m", [])
+    klines_5m = klines_by_timeframe.get("5m", [])
+    klines_15m = klines_by_timeframe.get("15m", [])
+    klines_1h = klines_by_timeframe.get("1h", [])
+    rule_config = radar_rule_config or {}
+    volume_price_oi_enabled = bool(rule_config.get("volume_price_oi", {}).get("enabled", True))
+    hourly_trend_enabled = bool(rule_config.get("hourly_trend", {}).get("enabled"))
+    pump_pullback_enabled = bool(rule_config.get("pump_pullback_second_wave", {}).get("enabled"))
     return MarketMetrics(
         symbol=symbol,
         price=float(price_value),
@@ -466,16 +476,16 @@ def build_market_metrics(
         rank_24h=rank_24h,
         high_24h=float(ticker["high"]) if ticker.get("high") is not None else None,
         low_24h=float(ticker["low"]) if ticker.get("low") is not None else None,
-        stats_1m=compute_timeframe_stats(klines_by_timeframe["1m"]),
-        stats_3m=compute_timeframe_stats(klines_by_timeframe["3m"]),
-        stats_5m=compute_timeframe_stats(klines_by_timeframe["5m"]),
-        stats_15m=compute_timeframe_stats(klines_by_timeframe["15m"]),
-        stats_1h=compute_timeframe_stats(klines_by_timeframe["1h"]),
+        stats_1m=compute_timeframe_stats(klines_1m),
+        stats_3m=compute_timeframe_stats(klines_3m),
+        stats_5m=compute_timeframe_stats(klines_5m),
+        stats_15m=compute_timeframe_stats(klines_15m),
+        stats_1h=compute_timeframe_stats(klines_1h),
         btc_15m_change=btc_15m_change,
         funding_rate=funding_rate,
         open_interest=open_interest,
-        resonance=build_resonance_stats(klines_by_timeframe["5m"], oi_history or []),
-        trend=build_hourly_trend_stats(klines_by_timeframe["1h"], klines_by_timeframe["15m"], trend_oi_history or [], funding_rate=funding_rate),
-        pump_pullback=build_pump_pullback_stats(klines_by_timeframe["15m"], klines_by_timeframe["1h"], klines_by_timeframe["5m"], pump_oi_history_15m or [], oi_history or [], (radar_rule_config or {}).get("pump_pullback_second_wave", {})) if (radar_rule_config or {}).get("pump_pullback_second_wave") else None,
+        resonance=build_resonance_stats(klines_5m, oi_history or []) if volume_price_oi_enabled else None,
+        trend=build_hourly_trend_stats(klines_1h, klines_15m, trend_oi_history or [], funding_rate=funding_rate) if hourly_trend_enabled else None,
+        pump_pullback=build_pump_pullback_stats(klines_15m, klines_1h, klines_5m, pump_oi_history_15m or [], oi_history or [], rule_config.get("pump_pullback_second_wave", {})) if pump_pullback_enabled else None,
         raw={"ticker": ticker},
     )

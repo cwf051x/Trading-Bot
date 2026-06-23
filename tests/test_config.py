@@ -17,6 +17,10 @@ def test_settings_defaults(monkeypatch) -> None:
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_PROXY",
+        "TELEGRAM_ORDER_ENABLED",
+        "TELEGRAM_ORDER_BOT_TOKEN",
+        "TELEGRAM_ORDER_CHAT_ID",
+        "TELEGRAM_ORDER_PROXY",
         "DATABASE_PATH",
         "RUN_MODE",
         "ENABLE_LIVE_TRADING",
@@ -116,6 +120,10 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.database_path == Path("data/trading_bot.sqlite")
     assert settings.exchange_proxy == ""
     assert settings.telegram_proxy == ""
+    assert settings.telegram_order_enabled is True
+    assert settings.telegram_order_bot_token == ""
+    assert settings.telegram_order_chat_id == ""
+    assert settings.telegram_order_proxy == ""
     assert settings.poll_interval_seconds == 60
     assert settings.kline_limit == 120
     assert settings.watch_symbols == []
@@ -184,6 +192,20 @@ def test_telegram_proxy_setting() -> None:
     settings = Settings(TELEGRAM_PROXY="http://127.0.0.1:7890")
 
     assert settings.telegram_proxy == "http://127.0.0.1:7890"
+
+
+def test_telegram_order_channel_settings() -> None:
+    settings = Settings(
+        TELEGRAM_ORDER_ENABLED=False,
+        TELEGRAM_ORDER_BOT_TOKEN="order-token",
+        TELEGRAM_ORDER_CHAT_ID="order-chat",
+        TELEGRAM_ORDER_PROXY="http://127.0.0.1:7890",
+    )
+
+    assert settings.telegram_order_enabled is False
+    assert settings.telegram_order_bot_token == "order-token"
+    assert settings.telegram_order_chat_id == "order-chat"
+    assert settings.telegram_order_proxy == "http://127.0.0.1:7890"
 
 
 def test_watch_symbols_parse_comma_separated_env() -> None:

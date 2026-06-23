@@ -111,6 +111,21 @@ def test_scanner_fetches_deep_data_only_for_candidate_pool() -> None:
     assert scanner.last_profile.meta["skipped_by_not_candidate"] == 15
 
 
+def test_scanner_fetches_only_enabled_rule_requirements() -> None:
+    client = CountingMarketClient(ticker_count=6)
+    settings = disable_extra_rule_fetches(Settings(_env_file=None, ALERT_CANDIDATE_TOP_N=3, ALERT_OI_TOP_N=2, ALERT_RULE_HOURLY_TREND_ENABLED=False))
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+
+    candidate_symbols = {"COIN0/USDT:USDT", "COIN1/USDT:USDT", "COIN2/USDT:USDT"}
+    assert sum(client.klines_calls[(symbol, "5m")] for symbol in candidate_symbols) == 3
+    assert sum(client.klines_calls[(symbol, "15m")] for symbol in candidate_symbols) == 0
+    assert sum(client.klines_calls[(symbol, "1h")] for symbol in candidate_symbols) == 0
+    assert set(client.oi_period_calls) == {("COIN0/USDT:USDT", "5m"), ("COIN1/USDT:USDT", "5m")}
+    assert not client.funding_calls
+
+
 def test_candidate_pool_merges_gainers_volume_and_recent_change_buckets() -> None:
     client = CountingMarketClient(ticker_count=6)
     settings = Settings(
@@ -148,7 +163,7 @@ def test_scanner_profiles_rule_diagnostic_gate_counts() -> None:
     assert "diagnostic_pump_has_first_pump" in scanner.last_profile.meta
 
 
-def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
+def test_scanner_reuses_required_oi_cache_and_skips_unused_timeframes() -> None:
     client = CountingMarketClient(ticker_count=5)
     settings = disable_extra_rule_fetches(Settings(
         _env_file=None,
@@ -165,14 +180,44 @@ def test_scanner_reuses_medium_slow_and_oi_cache_within_ttl() -> None:
     scanner.scan()
 
     candidate_symbols = {"COIN0/USDT:USDT", "COIN1/USDT:USDT", "COIN2/USDT:USDT"}
-    assert sum(client.klines_calls[(symbol, "1m")] for symbol in candidate_symbols) == 6
+    assert sum(client.klines_calls[(symbol, "5m")] for symbol in candidate_symbols) == 6
+    assert sum(client.klines_calls[(symbol, "1m")] for symbol in candidate_symbols) == 0
+    assert sum(client.klines_calls[(symbol, "15m")] for symbol in candidate_symbols) == 0
+    assert sum(client.klines_calls[(symbol, "1h")] for symbol in candidate_symbols) == 0
+    assert sum(client.oi_calls.values()) == 2
+    assert scanner.last_profile.meta["scan_timeframes"] == "5m"
+    assert scanner.last_profile.meta["scan_oi_periods"] == "5m"
+    assert scanner.last_profile.meta["oi_cache_hits"] == 2
+    assert scanner.last_profile.meta["skipped_by_ttl"] >= 2
+
+
+def test_scanner_reuses_medium_slow_and_multi_period_oi_cache_when_rules_need_them() -> None:
+    client = CountingMarketClient(ticker_count=5)
+    settings = Settings(
+        _env_file=None,
+        ALERT_CANDIDATE_TOP_N=3,
+        ALERT_OI_TOP_N=2,
+        ALERT_KLINE_MEDIUM_TTL_SECONDS=180,
+        ALERT_KLINE_SLOW_TTL_SECONDS=600,
+        ALERT_OI_HOT_TTL_SECONDS=300,
+        ALERT_OI_WARM_TTL_SECONDS=300,
+    )
+    scanner = MarketScanner(client, settings)
+
+    scanner.scan()
+    scanner.scan()
+
+    candidate_symbols = {"COIN0/USDT:USDT", "COIN1/USDT:USDT", "COIN2/USDT:USDT"}
     assert sum(client.klines_calls[(symbol, "5m")] for symbol in candidate_symbols) == 6
     assert sum(client.klines_calls[(symbol, "15m")] for symbol in candidate_symbols) == 3
     assert sum(client.klines_calls[(symbol, "1h")] for symbol in candidate_symbols) == 3
-    assert sum(client.oi_calls.values()) == 2
-    assert scanner.last_profile.meta["kline_cache_hits"] >= 6
-    assert scanner.last_profile.meta["oi_cache_hits"] == 2
-    assert scanner.last_profile.meta["skipped_by_ttl"] >= 8
+    assert sum(client.oi_period_calls.values()) == 6
+    assert {period for _, period in client.oi_period_calls} == {"5m", "15m", "1h"}
+    assert sum(client.funding_calls.values()) == 2
+    assert scanner.last_profile.meta["scan_timeframes"] == "15m,1h,5m"
+    assert scanner.last_profile.meta["scan_oi_periods"] == "15m,1h,5m"
+    assert scanner.last_profile.meta["oi_cache_hits"] == 6
+    assert scanner.last_profile.meta["funding_cache_hits"] == 2
 
 
 def test_scanner_limits_oi_refreshes_per_loop() -> None:
@@ -362,7 +407,7 @@ def test_scanner_enters_rate_limit_backoff_after_429(monkeypatch) -> None:
 def test_scanner_uses_backoff_request_spacing(monkeypatch) -> None:
     settings = Settings(_env_file=None, ALERT_FETCH_MIN_INTERVAL_SECONDS=0.15, ALERT_RATE_LIMIT_BACKOFF_MIN_INTERVAL_SECONDS=0.5)
     scanner = MarketScanner(CountingMarketClient(), settings)
-    scanner._rate_limit_backoff_until = 20.0
+    scanner.market_data._rate_limit_backoff_until = 20.0
     times = iter([10.0, 10.1, 10.2, 10.3, 10.6])
     sleeps: list[float] = []
 

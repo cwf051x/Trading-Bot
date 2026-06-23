@@ -19,7 +19,7 @@ from app.alerts.telegram_formatter import format_pct
 from app.config import get_settings
 from app.execution.paper import PaperTradingEngine
 from app.exchange.binance import BinanceFuturesClient
-from app.notify.telegram import TelegramNotifier
+from app.main import build_telegram_notifiers
 from app.risk.manager import RiskManager
 from app.storage.sqlite import SQLiteStorage
 
@@ -33,8 +33,8 @@ def main() -> None:
     settings = get_settings()
     storage = SQLiteStorage(settings.database_path)
     client = BinanceFuturesClient(proxy=settings.exchange_proxy)
-    notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id, proxy=settings.telegram_proxy or settings.exchange_proxy)
-    paper = PaperTradingEngine(storage=storage, notifier=notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+    notifier, order_notifier = build_telegram_notifiers(settings)
+    paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
     risk_manager = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
     radar = MarketAlertRadar(MarketScanner(client, settings, storage=storage), storage, notifier, settings, paper=paper, risk_manager=risk_manager)
     while True:

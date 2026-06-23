@@ -3,7 +3,7 @@
 """
 
 from app.exchange.binance import Kline
-from app.main import run_paper_cycle
+from app.main import build_telegram_notifiers, run_paper_cycle
 from app.risk.manager import RiskManager
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.base import Signal
@@ -51,6 +51,50 @@ class FakeSettings:
     active_symbols = ["ETH/USDT:USDT"]
     default_timeframe = "15m"
     kline_limit = 2
+
+
+class FakeTelegramSettings:
+    telegram_bot_token = "alert-token"
+    telegram_chat_id = "alert-chat"
+    telegram_proxy = "http://alert-proxy"
+    exchange_proxy = "http://exchange-proxy"
+    telegram_order_enabled = True
+    telegram_order_bot_token = ""
+    telegram_order_chat_id = ""
+    telegram_order_proxy = ""
+
+
+def test_build_telegram_notifiers_defaults_orders_to_alert_channel() -> None:
+    alert_notifier, order_notifier = build_telegram_notifiers(FakeTelegramSettings())
+
+    assert alert_notifier.bot_token == "alert-token"
+    assert alert_notifier.chat_id == "alert-chat"
+    assert alert_notifier.proxy == "http://alert-proxy"
+    assert order_notifier.bot_token == "alert-token"
+    assert order_notifier.chat_id == "alert-chat"
+    assert order_notifier.proxy == "http://alert-proxy"
+
+
+def test_build_telegram_notifiers_uses_dedicated_order_channel() -> None:
+    class Settings(FakeTelegramSettings):
+        telegram_order_bot_token = "order-token"
+        telegram_order_chat_id = "order-chat"
+        telegram_order_proxy = "http://order-proxy"
+
+    _, order_notifier = build_telegram_notifiers(Settings())
+
+    assert order_notifier.bot_token == "order-token"
+    assert order_notifier.chat_id == "order-chat"
+    assert order_notifier.proxy == "http://order-proxy"
+
+
+def test_build_telegram_notifiers_can_disable_order_channel() -> None:
+    class Settings(FakeTelegramSettings):
+        telegram_order_enabled = False
+
+    _, order_notifier = build_telegram_notifiers(Settings())
+
+    assert order_notifier.enabled is False
 
 
 def test_run_paper_cycle_creates_order_once(tmp_path):
