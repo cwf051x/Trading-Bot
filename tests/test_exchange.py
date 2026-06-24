@@ -75,6 +75,29 @@ def test_open_interest_history_retries_with_proxy_after_direct_timeout(monkeypat
     assert calls[1]["params"]["symbol"] == "OPUSDT"
 
 
+def test_open_interest_history_direct_mode_does_not_require_proxy(monkeypatch) -> None:
+    def fake_factory(config):
+        return FakeBinanceUSDM(config)
+
+    calls = []
+
+    def fake_get(url, *, params, timeout, proxies):
+        calls.append({"url": url, "params": params, "timeout": timeout, "proxies": proxies})
+        return FakeResponse()
+
+    import ccxt
+
+    monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
+    monkeypatch.setattr(BinanceFuturesClient, "_request_get", staticmethod(fake_get))
+
+    client = BinanceFuturesClient(network_mode="direct")
+    points = client.get_open_interest_history("OP/USDT:USDT")
+
+    assert len(points) == 1
+    assert len(calls) == 1
+    assert calls[0]["proxies"] is None
+
+
 def test_open_interest_history_uses_proxy_without_direct_attempt_in_proxy_mode(monkeypatch) -> None:
     def fake_factory(config):
         return FakeBinanceUSDM(config)

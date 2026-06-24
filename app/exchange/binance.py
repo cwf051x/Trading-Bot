@@ -201,10 +201,11 @@ class BinanceFuturesClient:
         让 REST 请求与 ccxt 请求使用一致的交易所网络策略。
         """
 
-        proxy_map = self._proxy_map()
         if self.network_mode == "proxy":
+            proxy_map = self._proxy_map()
             return self._request_get(url, params=params, timeout=proxy_timeout, proxies=proxy_map)
         if self.network_mode == "proxy_fallback":
+            proxy_map = self._proxy_map()
             try:
                 return self._request_get(url, params=params, timeout=proxy_timeout, proxies=proxy_map)
             except RequestException as proxy_exc:
@@ -217,6 +218,7 @@ class BinanceFuturesClient:
                 if not self.proxy:
                     raise
                 logger.info("[network] direct %s request failed: %s, retrying proxy", description, direct_exc)
+                proxy_map = self._proxy_map()
                 return self._request_get(url, params=params, timeout=proxy_timeout, proxies=proxy_map)
         return self._request_get(url, params=params, timeout=direct_timeout, proxies=None)
 
