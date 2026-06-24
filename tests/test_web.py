@@ -86,16 +86,16 @@ def test_alerts_page_uses_compact_chinese_table_display(monkeypatch, tmp_path: P
     assert "BTC/USDT:USDT" not in table_body
     assert "TOP_GAINER_MOMENTUM" not in table_body
     assert "24h gainer rank top 10" not in table_body
-    assert response.text.index("<th>Time</th>") < response.text.index("<th>Symbol</th>")
-    assert "<th>Signal</th>" in response.text
+    assert response.text.index(">Time</a>") < response.text.index(">Symbol</a>")
+    assert ">Signal</a>" in response.text
     assert "<th>Change</th>" in response.text
-    assert "<th>Market</th>" in response.text
+    assert ">Market</a>" in response.text
     assert "<th>Detail</th>" in response.text
     assert "<th>15m</th>" not in response.text
     assert "<th>Telegram</th>" not in response.text
 
 
-def test_alerts_page_defaults_to_volume_price_oi_resonance(monkeypatch, tmp_path: Path) -> None:
+def test_alerts_page_defaults_to_all_alerts(monkeypatch, tmp_path: Path) -> None:
     database_path = tmp_path / "web.sqlite"
     monkeypatch.setenv("DATABASE_PATH", str(database_path))
     monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
@@ -122,13 +122,262 @@ def test_alerts_page_defaults_to_volume_price_oi_resonance(monkeypatch, tmp_path
     client = TestClient(create_app())
 
     default_response = client.get("/alerts")
-    all_response = client.get("/alerts?type=all")
+    resonance_response = client.get("/alerts?type=VOLUME_PRICE_OI_RESONANCE")
 
     assert default_response.status_code == 200
-    assert "NEW" in default_response.text
-    assert "OLD" not in default_response.text
-    assert "VOLUME_PRICE_OI_RESONANCE" not in default_response.text
-    assert "OLD" in all_response.text
+    default_body = default_response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    resonance_body = resonance_response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert "NEW" in default_body
+    assert "OLD" in default_body
+    assert "VOLUME_PRICE_OI_RESONANCE" not in default_body
+    assert "NEW" in resonance_body
+    assert "OLD" not in resonance_body
+
+
+def test_orders_page_supports_pagination_sorting_and_search(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    for symbol in ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]:
+        storage.create_order(
+            symbol=symbol,
+            side="long",
+            quantity=1,
+            entry_price=100,
+            stop_loss=98,
+            take_profit=104,
+            status="open",
+            reason=f"alert {symbol}",
+            timestamp=1_700_000_000_000,
+        )
+    client = TestClient(create_app())
+
+    response = client.get("/orders?per_page=2&page=2&sort=symbol&direction=asc&q=USDT")
+
+    assert response.status_code == 200
+    assert "Page 2 / 2" in response.text
+    table_body = response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert "SOL/USDT:USDT" in table_body
+    assert "BTC/USDT:USDT" not in table_body
+    assert 'href="/orders?page=1&amp;per_page=2&amp;sort=symbol&amp;direction=asc&amp;q=USDT"' in response.text
+    assert 'name="q" value="USDT"' in response.text
+    assert "Sort by Symbol" in response.text
+
+
+def test_orders_page_shows_paper_performance_summary(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    monkeypatch.setenv("PAPER_LEVERAGE", "2")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    storage.create_order("WIN/USDT:USDT", "long", 2, 100, 95, 110, "open", "alert HOURLY_TREND_T3: win", 1)
+    storage.create_position(1, "WIN/USDT:USDT", "long", 2, 100, 95, 110, 1)
+    storage.close_position(1, 110, 20, "take_profit", 2)
+    storage.create_order("OPEN/USDT:USDT", "long", 4, 50, 45, 60, "open", "alert VOLUME_PRICE_OI_RESONANCE: open", 3)
+    storage.create_position(2, "OPEN/USDT:USDT", "long", 4, 50, 45, 60, 3)
+    client = TestClient(create_app())
+
+    response = client.get("/orders")
+
+    assert response.status_code == 200
+    assert "Paper Performance" in response.text
+    assert "Realized PnL" in response.text
+    assert "+20.00" in response.text
+    assert "Win Rate" in response.text
+    assert "100.00%" in response.text
+    assert "Open Positions" in response.text
+    assert "Open Margin" in response.text
+    assert "100.00" in response.text
+
+
+def test_order_tables_use_compact_numeric_display(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    storage.create_order(
+        "BEL/USDT:USDT",
+        "long",
+        475.80530047104725,
+        0.21017,
+        0.2059666,
+        0.21857680000000002,
+        "open",
+        "alert VOLUME_PRICE_OI_RESONANCE",
+        1,
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/orders")
+
+    assert response.status_code == 200
+    assert "475.8053" in response.text
+    assert "475.80530047104725" not in response.text
+    assert "0.218577" in response.text
+    assert "0.21857680000000002" not in response.text
+
+
+def test_trades_page_shows_paper_performance_summary(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    storage.create_order("WIN/USDT:USDT", "long", 1, 100, 95, 110, "open", "alert HOURLY_TREND_T3: win", 1)
+    storage.create_position(1, "WIN/USDT:USDT", "long", 1, 100, 95, 110, 1)
+    storage.close_position(1, 110, 10, "take_profit", 2)
+    client = TestClient(create_app())
+
+    response = client.get("/trades")
+
+    assert response.status_code == 200
+    assert "Paper Performance" in response.text
+    assert "Realized PnL" in response.text
+    assert "+10.00" in response.text
+
+
+def test_ledger_pages_render_table_controls_even_when_empty(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    client = TestClient(create_app())
+
+    for path in ["/orders", "/positions", "/trades"]:
+        response = client.get(path)
+
+        assert response.status_code == 200
+        assert 'class="table-toolbar"' in response.text
+        assert 'name="q" value=""' in response.text
+        assert "Rows" in response.text
+
+
+def test_orders_page_caps_page_to_last_available_page(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    for symbol in ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]:
+        storage.create_order(
+            symbol=symbol,
+            side="long",
+            quantity=1,
+            entry_price=100,
+            stop_loss=98,
+            take_profit=104,
+            status="open",
+            reason=f"alert {symbol}",
+            timestamp=1_700_000_000_000,
+        )
+    client = TestClient(create_app())
+
+    response = client.get("/orders?per_page=2&page=99&sort=symbol&direction=asc")
+
+    assert response.status_code == 200
+    assert "Page 2 / 2" in response.text
+    assert "SOL/USDT:USDT" in response.text
+
+
+def test_alerts_page_supports_search_and_sorting(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    base_payload = {
+        "timestamp": 1_700_000_000_000,
+        "level": "B",
+        "score": 70,
+        "price": 100.0,
+        "price_change_3m": 0.01,
+        "price_change_5m": 0.02,
+        "price_change_15m": 0.03,
+        "price_change_1h": 0.04,
+        "price_change_24h": 0.05,
+        "volume_ratio": 2.0,
+        "btc_15m_change": 0.0,
+        "suggested_action": "观察",
+        "sent_to_telegram": False,
+        "raw_json": {},
+    }
+    storage.save_market_alert({**base_payload, "symbol": "BTC/USDT:USDT", "alert_type": "VOLUME_PRICE_OI_RESONANCE", "reason": "BTC resonance / BTC 共振"})
+    storage.save_market_alert({**base_payload, "symbol": "SOL/USDT:USDT", "alert_type": "VOLUME_PRICE_OI_RESONANCE", "reason": "SOL resonance / SOL 共振", "score": 90})
+    client = TestClient(create_app())
+
+    response = client.get("/alerts?type=all&q=SOL&sort=score&direction=desc")
+    table_body = response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+
+    assert response.status_code == 200
+    assert '<td class="symbol-cell">SOL</td>' in table_body
+    assert '<td class="symbol-cell">BTC</td>' not in table_body
+    assert 'name="q" value="SOL"' in response.text
+    assert 'href="/alerts?page=1&amp;per_page=25&amp;sort=score&amp;direction=asc&amp;type=all&amp;q=SOL"' in response.text
+
+
+def test_radar_replay_page_renders_form(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    client = TestClient(create_app())
+
+    response = client.get("/replay")
+
+    assert response.status_code == 200
+    assert "Radar Replay" in response.text
+    assert 'name="symbol"' in response.text
+    assert 'name="days"' in response.text
+
+
+def test_radar_replay_post_shows_summary_and_detail(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+
+    def fake_run(symbol: str, days: int, warmup_bars: int, cooldown_bars: int):
+        return web_server.RadarReplayView(
+            symbol=symbol,
+            days=days,
+            detail_path=tmp_path / "detail.csv",
+            summary_path=tmp_path / "summary.csv",
+            signal_count=1,
+            summary=[
+                {
+                    "signal_type": "VOLUME_PRICE_OI_RESONANCE",
+                    "count": 1,
+                    "win_rate_1h": 1.0,
+                    "avg_return_1h": 0.0325,
+                    "profit_factor_1h": 0.0,
+                    "avg_mfe": 0.05,
+                    "avg_mae": -0.01,
+                }
+            ],
+            details=[
+                {
+                    "symbol": symbol,
+                    "signal_type": "VOLUME_PRICE_OI_RESONANCE",
+                    "level": "B",
+                    "score": 72,
+                    "trigger_time": 1_700_000_000_000,
+                    "trigger_price": 100.0,
+                    "1h": 0.0325,
+                    "mfe": 0.05,
+                    "mae": -0.01,
+                    "reasons": "L2 strong rally / L2 强拉主升确认",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(web_server, "run_radar_replay", fake_run)
+    client = TestClient(create_app())
+
+    response = client.post("/replay", data={"symbol": "ETH/USDT:USDT", "days": "7", "warmup_bars": "120", "cooldown_bars": "6"})
+
+    assert response.status_code == 200
+    assert "Replay generated 1 signals" in response.text
+    assert "量价OI共振" in response.text
+    assert "+3.25%" in response.text
+    assert "ETH/USDT:USDT" in response.text
 
 
 def test_logs_page_renders_local_work_log(monkeypatch, tmp_path: Path) -> None:

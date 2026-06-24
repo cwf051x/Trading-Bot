@@ -1,0 +1,22 @@
+{% if table is defined %}
+<form class="table-toolbar" method="get" action="{{ table.path }}">
+  {% for key, value in table.extra_params.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ value }}">
+  {% endfor %}
+  <label>
+    Search
+    <input name="q" value="{{ table.q }}" placeholder="symbol / status / reason">
+  </label>
+  <label>
+    Rows
+    <select name="per_page">
+      {% for item in [10, 25, 50, 100] %}
+        <option value="{{ item }}" {% if table.per_page == item %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <input type="hidden" name="sort" value="{{ table.sort }}">
+  <input type="hidden" name="direction" value="{{ table.direction }}">
+  <button class="button" type="submit">Apply</button>
+</form>
+{% endif %}

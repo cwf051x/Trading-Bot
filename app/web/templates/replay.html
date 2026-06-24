@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+{% set form_symbol = form.symbol if form is defined else "BTC/USDT:USDT" %}
+{% set form_days = form.days if form is defined else 30 %}
+{% set form_warmup = form.warmup_bars if form is defined else 120 %}
+{% set form_cooldown = form.cooldown_bars if form is defined else 6 %}
+
+<div class="page-head">
+  <div>
+    <h1>Radar Replay</h1>
+    <p class="lead">Download Binance USDT-M history, replay radar signals, and inspect forward returns without changing live or paper orders.</p>
+  </div>
+</div>
+
+{% if error %}
+  <div class="notice">{{ error }}</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post" action="/replay">
+    <div class="form-grid">
+      <label>
+        Symbol
+        <input name="symbol" value="{{ form_symbol }}" placeholder="BTC/USDT:USDT">
+      </label>
+      <label>
+        Days
+        <input name="days" type="number" min="1" max="90" value="{{ form_days }}">
+      </label>
+      <label>
+        Warmup Bars
+        <input name="warmup_bars" type="number" min="20" max="500" value="{{ form_warmup }}">
+      </label>
+      <label>
+        Cooldown Bars
+        <input name="cooldown_bars" type="number" min="0" max="288" value="{{ form_cooldown }}">
+      </label>
+    </div>
+    <button type="submit">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg>
+      Run Replay
+    </button>
+  </form>
+</section>
+
+{% if replay %}
+  <section class="section grid-tight">
+    <div class="stat">
+      <div class="metric">Symbol</div>
+      <div class="value">{{ replay.symbol }}</div>
+      <div class="meta">{{ replay.days }} days</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Signals</div>
+      <div class="value">{{ replay.signal_count }}</div>
+      <div class="meta">Replay generated {{ replay.signal_count }} signals</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Detail CSV</div>
+      <div class="value" style="font-size: 13px;">{{ replay.detail_path.name }}</div>
+      <div class="meta">{{ replay.detail_path.parent }}</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Summary CSV</div>
+      <div class="value" style="font-size: 13px;">{{ replay.summary_path.name }}</div>
+      <div class="meta">{{ replay.summary_path.parent }}</div>
+    </div>
+  </section>
+
+  <h2>Summary</h2>
+  {% if replay.summary %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Signal</th>
+            <th>Count</th>
+            <th>Win Rate 1h</th>
+            <th>Avg Return 1h</th>
+            <th>Profit Factor</th>
+            <th>Avg MFE</th>
+            <th>Avg MAE</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in replay.summary %}
+          <tr>
+            <td>{{ row.signal_type | alert_type_label }}</td>
+            <td>{{ row.count }}</td>
+            <td>{{ row.win_rate_1h | percent }}</td>
+            <td>{{ row.avg_return_1h | percent }}</td>
+            <td>{{ row.profit_factor_1h | compact_number(2) }}</td>
+            <td>{{ row.avg_mfe | percent }}</td>
+            <td>{{ row.avg_mae | percent }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty">No signal matched in this replay window.</div>
+  {% endif %}
+
+  <h2>Latest Signal Details</h2>
+  {% if replay.details %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Symbol</th>
+            <th>Signal</th>
+            <th>Level</th>
+            <th>Score</th>
+            <th>Price</th>
+            <th>15m</th>
+            <th>30m</th>
+            <th>1h</th>
+            <th>4h</th>
+            <th>24h</th>
+            <th>MFE</th>
+            <th>MAE</th>
+            <th>Reasons</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in replay.details %}
+          <tr>
+            <td>{{ row.trigger_time | datetime_ms }}</td>
+            <td>{{ row.symbol }}</td>
+            <td>{{ row.signal_type | alert_type_label }}</td>
+            <td><span class="badge {% if row.level == 'A' or row.level == 'T4' or row.level == 'P4' %}danger{% elif row.level == 'B' or row.level == 'T2' or row.level == 'P2' %}warn{% else %}ok{% endif %}">{{ row.level or "-" }}</span></td>
+            <td>{{ row.score }}</td>
+            <td>{{ row.trigger_price | compact_price }}</td>
+            <td>{{ row["15m"] | percent if row["15m"] is defined else "-" }}</td>
+            <td>{{ row["30m"] | percent if row["30m"] is defined else "-" }}</td>
+            <td>{{ row["1h"] | percent if row["1h"] is defined else "-" }}</td>
+            <td>{{ row["4h"] | percent if row["4h"] is defined else "-" }}</td>
+            <td>{{ row["24h"] | percent if row["24h"] is defined else "-" }}</td>
+            <td>{{ row.mfe | percent }}</td>
+            <td>{{ row.mae | percent }}</td>
+            <td class="reason">{{ row.reasons | chinese_reason }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty">No detail rows to display.</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

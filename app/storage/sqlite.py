@@ -206,6 +206,111 @@ class SQLiteStorage:
             rows = connection.execute("SELECT * FROM orders ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
+    def query_records(
+        self,
+        table: str,
+        *,
+        search_columns: list[str] | None = None,
+        filters: dict[str, Any] | None = None,
+        query: str = "",
+        sort_by: str = "id",
+        direction: str = "desc",
+        limit: int = 25,
+        offset: int = 0,
+        allowed_tables: dict[str, set[str]] | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return filtered rows and total count for admin tables.
+        用白名单控制表名和排序列，避免把页面参数直接拼成危险 SQL。
+        """
+
+        allowed = allowed_tables or self._admin_table_columns()
+        if table not in allowed:
+            raise ValueError(f"Unsupported table: {table}")
+        columns = allowed[table]
+        if sort_by not in columns:
+            sort_by = "id"
+        direction_sql = "ASC" if direction.lower() == "asc" else "DESC"
+        where_sql, params = self._build_table_where(columns, search_columns or [], filters or {}, query)
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, int(offset))
+        with self.connect() as connection:
+            total_row = connection.execute(f"SELECT COUNT(*) AS count FROM {table}{where_sql}", params).fetchone()
+            rows = connection.execute(
+                f"SELECT * FROM {table}{where_sql} ORDER BY {sort_by} {direction_sql}, id DESC LIMIT ? OFFSET ?",
+                [*params, safe_limit, safe_offset],
+            ).fetchall()
+        return [dict(row) for row in rows], int(total_row["count"] if total_row else 0)
+
+    @staticmethod
+    def _admin_table_columns() -> dict[str, set[str]]:
+        """Columns that the admin UI is allowed to query dynamically.
+        后台动态表格允许访问的列白名单。
+        """
+
+        return {
+            "orders": {"id", "symbol", "side", "quantity", "entry_price", "stop_loss", "take_profit", "status", "reason", "timestamp"},
+            "positions": {
+                "id",
+                "order_id",
+                "symbol",
+                "side",
+                "quantity",
+                "entry_price",
+                "stop_loss",
+                "take_profit",
+                "status",
+                "exit_price",
+                "pnl",
+                "exit_reason",
+                "opened_at",
+                "closed_at",
+            },
+            "trades": {"id", "position_id", "symbol", "side", "quantity", "entry_price", "exit_price", "pnl", "exit_reason", "opened_at", "closed_at"},
+            "market_alerts": {
+                "id",
+                "timestamp",
+                "symbol",
+                "alert_type",
+                "level",
+                "score",
+                "price",
+                "price_change_3m",
+                "price_change_5m",
+                "price_change_15m",
+                "price_change_1h",
+                "price_change_24h",
+                "volume_ratio",
+                "btc_15m_change",
+                "reason",
+                "suggested_action",
+                "invalidation_price",
+                "target_1",
+                "target_2",
+                "sent_to_telegram",
+                "raw_json",
+            },
+        }
+
+    @staticmethod
+    def _build_table_where(columns: set[str], search_columns: list[str], filters: dict[str, Any], query: str) -> tuple[str, list[Any]]:
+        """Build a parameterized WHERE clause for simple admin filters.
+        构建后台列表筛选条件，所有值都使用参数绑定。
+        """
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in filters.items():
+            if column not in columns or value in (None, "", "all"):
+                continue
+            clauses.append(f"{column} = ?")
+            params.append(value)
+        clean_query = query.strip()
+        searchable = [column for column in search_columns if column in columns]
+        if clean_query and searchable:
+            clauses.append("(" + " OR ".join(f"{column} LIKE ?" for column in searchable) + ")")
+            params.extend([f"%{clean_query}%"] * len(searchable))
+        return (" WHERE " + " AND ".join(clauses), params) if clauses else ("", params)
+
     def get_positions(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent positions regardless of status.
         返回最近的全部持仓记录，不区分状态。
@@ -283,6 +388,70 @@ class SQLiteStorage:
         with self.connect() as connection:
             row = connection.execute("SELECT COALESCE(SUM(pnl), 0) AS realized_pnl FROM trades").fetchone()
         return float(row["realized_pnl"])
+
+    def get_paper_performance_summary(self, leverage: float = 1.0) -> dict[str, float | int]:
+        """Return paper trading performance and open-risk aggregates.
+        汇总模拟盘收益、胜率、退出分布和当前未平仓风险。
+        """
+
+        safe_leverage = max(float(leverage or 1.0), 1.0)
+        with self.connect() as connection:
+            order_row = connection.execute("SELECT COUNT(*) AS total_orders FROM orders").fetchone()
+            trade_row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS closed_trades,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS winning_trades,
+                    SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losing_trades,
+                    COALESCE(SUM(pnl), 0) AS realized_pnl,
+                    COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS gross_profit,
+                    COALESCE(SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END), 0) AS gross_loss,
+                    AVG(CASE WHEN pnl > 0 THEN pnl END) AS avg_win,
+                    AVG(CASE WHEN pnl < 0 THEN pnl END) AS avg_loss,
+                    MAX(pnl) AS max_win,
+                    MIN(pnl) AS max_loss,
+                    SUM(CASE WHEN exit_reason = 'take_profit' THEN 1 ELSE 0 END) AS take_profit_count,
+                    SUM(CASE WHEN exit_reason = 'stop_loss' THEN 1 ELSE 0 END) AS stop_loss_count
+                FROM trades
+                """
+            ).fetchone()
+            open_row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS open_positions,
+                    COALESCE(SUM(entry_price * quantity), 0) AS open_notional
+                FROM positions
+                WHERE status = 'open'
+                """
+            ).fetchone()
+
+        total_orders = int(order_row["total_orders"] or 0)
+        closed_trades = int(trade_row["closed_trades"] or 0)
+        winning_trades = int(trade_row["winning_trades"] or 0)
+        losing_trades = int(trade_row["losing_trades"] or 0)
+        gross_loss = float(trade_row["gross_loss"] or 0.0)
+        open_notional = float(open_row["open_notional"] or 0.0)
+        return {
+            "total_orders": total_orders,
+            "open_positions": int(open_row["open_positions"] or 0),
+            "closed_trades": closed_trades,
+            "winning_trades": winning_trades,
+            "losing_trades": losing_trades,
+            "win_rate": winning_trades / closed_trades if closed_trades else 0.0,
+            "realized_pnl": float(trade_row["realized_pnl"] or 0.0),
+            "gross_profit": float(trade_row["gross_profit"] or 0.0),
+            "gross_loss": gross_loss,
+            "profit_factor": float(trade_row["gross_profit"] or 0.0) / gross_loss if gross_loss else 0.0,
+            "avg_win": float(trade_row["avg_win"] or 0.0),
+            "avg_loss": float(trade_row["avg_loss"] or 0.0),
+            "max_win": float(trade_row["max_win"] or 0.0),
+            "max_loss": float(trade_row["max_loss"] or 0.0),
+            "take_profit_count": int(trade_row["take_profit_count"] or 0),
+            "stop_loss_count": int(trade_row["stop_loss_count"] or 0),
+            "other_exit_count": max(0, closed_trades - int(trade_row["take_profit_count"] or 0) - int(trade_row["stop_loss_count"] or 0)),
+            "open_notional": open_notional,
+            "open_margin": open_notional / safe_leverage,
+        }
 
     def save_market_alert(self, alert: dict[str, Any]) -> int:
         """Insert a market alert and return its id.

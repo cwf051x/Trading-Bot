@@ -1,0 +1,50 @@
+{% if performance is defined %}
+<div class="section">
+  <div class="toolbar">
+    <h2>Paper Performance</h2>
+    <span class="badge">Local SQLite</span>
+  </div>
+  <div class="grid-tight">
+    <div class="stat">
+      <div class="metric">Realized PnL</div>
+      <div class="value {% if performance.realized_pnl > 0 %}ok{% elif performance.realized_pnl < 0 %}danger{% endif %}">{{ "%+.2f"|format(performance.realized_pnl) }}</div>
+      <div class="meta">Closed trades only</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Win Rate</div>
+      <div class="value">{{ "%.2f%%"|format(performance.win_rate * 100) }}</div>
+      <div class="meta">{{ performance.winning_trades }} wins / {{ performance.losing_trades }} losses</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Profit Factor</div>
+      <div class="value">{{ "%.2f"|format(performance.profit_factor) }}</div>
+      <div class="meta">Gross profit / gross loss</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Open Positions</div>
+      <div class="value {% if performance.open_positions > 0 %}warn{% endif %}">{{ performance.open_positions }}</div>
+      <div class="meta">{{ performance.total_orders }} total orders</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Open Notional</div>
+      <div class="value">{{ "%.2f"|format(performance.open_notional) }}</div>
+      <div class="meta">Entry price * quantity</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Open Margin</div>
+      <div class="value">{{ "%.2f"|format(performance.open_margin) }}</div>
+      <div class="meta">Estimated by configured leverage</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Avg Win / Loss</div>
+      <div class="value">{{ "%+.2f"|format(performance.avg_win) }} / {{ "%+.2f"|format(performance.avg_loss) }}</div>
+      <div class="meta">Average closed trade PnL</div>
+    </div>
+    <div class="stat">
+      <div class="metric">Exits</div>
+      <div class="value">{{ performance.take_profit_count }} TP / {{ performance.stop_loss_count }} SL</div>
+      <div class="meta">{{ performance.other_exit_count }} other exits</div>
+    </div>
+  </div>
+</div>
+{% endif %}

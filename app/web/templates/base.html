@@ -345,6 +345,53 @@
         color: var(--buy);
         filter: none;
       }
+      .button.disabled {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+      .table-toolbar {
+        display: flex;
+        align-items: end;
+        gap: 12px;
+        margin-bottom: 12px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+      }
+      .table-toolbar label {
+        display: grid;
+        gap: 6px;
+        min-width: 160px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+      .table-toolbar label:first-child {
+        min-width: 280px;
+        flex: 1;
+      }
+      .sort-link {
+        color: inherit;
+        text-decoration: none;
+      }
+      .sort-link:hover {
+        color: var(--buy);
+      }
+      .pagination {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .pagination-actions {
+        display: flex;
+        gap: 8px;
+      }
 
       table {
         width: 100%;
@@ -518,6 +565,10 @@
           <a class="{% if current_path.startswith('/backtests') %}active{% endif %}" href="/backtests">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="m19 9-5 5-4-4-3 3"></path></svg>
             Backtests
+          </a>
+          <a class="{% if current_path.startswith('/replay') %}active{% endif %}" href="/replay">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="M8 15l3-3 2 2 5-6"></path><path d="M15 8h3v3"></path></svg>
+            Radar Replay
           </a>
           <a class="{% if current_path.startswith('/equity') %}active{% endif %}" href="/equity">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 14 3-3 3 2 5-6"></path></svg>

@@ -5,21 +5,38 @@
 from __future__ import annotations
 
 import csv
+import time
+from dataclasses import dataclass
 from datetime import datetime
+from math import ceil
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from app.alerts.replay import ReplayConfig, ReplayOutcome, replay_symbol
+from app.alerts.rule_config import load_radar_rule_config
 from app.backtest.engine import BacktestEngine
 from app.config import Settings
 from app.data.symbol_universe import symbol_base
+from app.exchange.binance import BinanceFuturesClient
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.momentum_oi import MomentumOIStrategy
 from app.web.env_editor import update_env_values
 from app.web.work_logs import load_work_log_view
+from scripts.replay_radar_signals import (
+    default_cache_path,
+    ensure_klines_csv,
+    ensure_oi_csv,
+    read_klines_csv,
+    read_oi_csv,
+    summarize,
+    write_outcomes,
+    write_summary,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -47,8 +64,31 @@ def format_percent(value: int | float | None) -> str:
     return f"{float(value) * 100:+.2f}%"
 
 
+def format_compact_number(value: int | float | None, decimals: int = 4) -> str:
+    """Format table numbers without long floating-point tails.
+    压缩表格数字展示，保留数据库精度但避免页面出现浮点长尾。
+    """
+
+    if value is None:
+        return "-"
+    text = f"{float(value):,.{decimals}f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def format_compact_price(value: int | float | None) -> str:
+    """Format prices with enough precision for small crypto quotes.
+    以有效数字展示价格，兼顾小币种价格和页面紧凑性。
+    """
+
+    if value is None:
+        return "-"
+    return f"{float(value):.6g}"
+
+
 templates.env.filters["datetime_ms"] = format_datetime_ms
 templates.env.filters["percent"] = format_percent
+templates.env.filters["compact_number"] = format_compact_number
+templates.env.filters["compact_price"] = format_compact_price
 
 ALERT_TYPE_LABELS = {
     "TOP_GAINER_MOMENTUM": "涨幅榜强势",
@@ -104,6 +144,154 @@ def chinese_reason_text(reason: str) -> str:
 templates.env.filters["symbol_base"] = display_symbol_base
 templates.env.filters["alert_type_label"] = alert_type_label
 templates.env.filters["chinese_reason"] = chinese_reason_text
+
+
+@dataclass(frozen=True)
+class TableState:
+    """Shared server-side table controls for admin pages.
+    后台表格统一使用的服务端分页、排序和搜索状态。
+    """
+
+    page: int
+    per_page: int
+    total: int
+    sort: str
+    direction: str
+    q: str
+    path: str
+    extra_params: dict[str, str]
+
+    @property
+    def total_pages(self) -> int:
+        return max(1, ceil(self.total / self.per_page))
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.per_page
+
+    @property
+    def has_previous(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.total_pages
+
+    def page_url(self, page: int) -> str:
+        return self.url(page=max(1, min(page, self.total_pages)))
+
+    def sort_url(self, column: str) -> str:
+        next_direction = "asc"
+        if self.sort == column and self.direction == "asc":
+            next_direction = "desc"
+        return self.url(page=1, sort=column, direction=next_direction)
+
+    def url(self, **overrides: Any) -> str:
+        params: dict[str, Any] = {
+            "page": overrides.get("page", self.page),
+            "per_page": overrides.get("per_page", self.per_page),
+            "sort": overrides.get("sort", self.sort),
+            "direction": overrides.get("direction", self.direction),
+            **self.extra_params,
+        }
+        query = overrides.get("q", self.q)
+        if query:
+            params["q"] = query
+        return f"{self.path}?{urlencode(params)}"
+
+
+@dataclass(frozen=True)
+class RadarReplayView:
+    """Rendered result for a web-triggered radar replay.
+    Web 页面触发雷达回放后用于模板展示的结果。
+    """
+
+    symbol: str
+    days: int
+    detail_path: Path
+    summary_path: Path
+    signal_count: int
+    summary: list[dict[str, Any]]
+    details: list[dict[str, Any]]
+
+
+def table_state(request: Request, *, allowed_sort: set[str], default_sort: str = "id", extra_params: dict[str, str] | None = None) -> TableState:
+    """Parse bounded table parameters from a request.
+    从请求中解析有边界的表格参数。
+    """
+
+    def parse_int(name: str, default: int) -> int:
+        try:
+            return int(request.query_params.get(name, str(default)))
+        except ValueError:
+            return default
+
+    per_page = min(max(parse_int("per_page", 25), 1), 100)
+    page = max(parse_int("page", 1), 1)
+    sort = request.query_params.get("sort", default_sort)
+    if sort not in allowed_sort:
+        sort = default_sort
+    direction = request.query_params.get("direction", "desc").lower()
+    if direction not in {"asc", "desc"}:
+        direction = "desc"
+    return TableState(
+        page=page,
+        per_page=per_page,
+        total=0,
+        sort=sort,
+        direction=direction,
+        q=request.query_params.get("q", "").strip(),
+        path=request.url.path,
+        extra_params=extra_params or {},
+    )
+
+
+def with_total(state: TableState, total: int) -> TableState:
+    """Return table state capped to the available page range.
+    根据总数修正页码，避免请求超过最后一页时显示空列表。
+    """
+
+    capped = TableState(**{**state.__dict__, "total": total})
+    if capped.page <= capped.total_pages:
+        return capped
+    return TableState(**{**capped.__dict__, "page": capped.total_pages})
+
+
+def query_table_page(
+    storage: SQLiteStorage,
+    state: TableState,
+    table: str,
+    *,
+    search_columns: list[str],
+    filters: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], TableState]:
+    """Query rows for the requested page and re-query when page is capped.
+    查询当前页数据；当页码超过最后一页被修正时重新查询。
+    """
+
+    rows, total = storage.query_records(
+        table,
+        search_columns=search_columns,
+        filters=filters,
+        query=state.q,
+        sort_by=state.sort,
+        direction=state.direction,
+        limit=state.per_page,
+        offset=state.offset,
+    )
+    capped = with_total(state, total)
+    if capped.page != state.page:
+        rows, _ = storage.query_records(
+            table,
+            search_columns=search_columns,
+            filters=filters,
+            query=capped.q,
+            sort_by=capped.sort,
+            direction=capped.direction,
+            limit=capped.per_page,
+            offset=capped.offset,
+        )
+    return rows, capped
 
 
 def create_app() -> FastAPI:
@@ -252,6 +440,44 @@ def create_app() -> FastAPI:
             base_context(request, settings, csv_files=list_backtest_csvs(), summary=read_backtest_summary()),
         )
 
+    @app.get("/replay")
+    def radar_replay_page(request: Request, _: None = Depends(require_admin)) -> Response:
+        """Render the radar replay form.
+        渲染雷达历史回放页面。
+        """
+
+        settings = Settings()
+        return templates.TemplateResponse(request, "replay.html", base_context(request, settings, title="Radar Replay", replay=None, error=""))
+
+    @app.post("/replay")
+    def run_radar_replay_page(
+        request: Request,
+        symbol: str = Form(...),
+        days: int = Form(30),
+        warmup_bars: int = Form(120),
+        cooldown_bars: int = Form(6),
+        _: None = Depends(require_admin),
+    ) -> Response:
+        """Run one-symbol radar replay and render the result.
+        执行单币种雷达回放并渲染结果。
+        """
+
+        settings = Settings()
+        try:
+            replay = run_radar_replay(symbol=symbol, days=days, warmup_bars=warmup_bars, cooldown_bars=cooldown_bars)
+        except Exception as exc:
+            return templates.TemplateResponse(
+                request,
+                "replay.html",
+                base_context(request, settings, title="Radar Replay", replay=None, error=str(exc), form={"symbol": symbol, "days": days, "warmup_bars": warmup_bars, "cooldown_bars": cooldown_bars}),
+                status_code=400,
+            )
+        return templates.TemplateResponse(
+            request,
+            "replay.html",
+            base_context(request, settings, title="Radar Replay", replay=replay, error="", form={"symbol": replay.symbol, "days": replay.days, "warmup_bars": warmup_bars, "cooldown_bars": cooldown_bars}),
+        )
+
     @app.post("/backtests/run")
     def run_backtest(csv_file: str = Form(...), _: None = Depends(require_admin)) -> RedirectResponse:
         settings = Settings()
@@ -300,21 +526,39 @@ def create_app() -> FastAPI:
     def orders_page(request: Request, _: None = Depends(require_admin)) -> Response:
         settings = Settings()
         storage = build_storage(settings)
-        return templates.TemplateResponse(request, "orders.html", base_context(request, settings, rows=storage.get_orders(limit=200), title="Orders"))
+        state = table_state(request, allowed_sort={"id", "symbol", "side", "quantity", "entry_price", "status", "timestamp"}, default_sort="id")
+        rows, state = query_table_page(storage, state, "orders", search_columns=["symbol", "side", "status", "reason"])
+        summary = storage.get_paper_performance_summary(leverage=settings.paper_leverage)
+        return templates.TemplateResponse(request, "orders.html", base_context(request, settings, rows=rows, table=state, performance=summary, title="Orders"))
 
     @app.get("/alerts")
     def alerts_page(request: Request, _: None = Depends(require_admin)) -> Response:
         settings = Settings()
         storage = build_storage(settings)
-        alert_filter = request.query_params.get("type", "VOLUME_PRICE_OI_RESONANCE")
+        alert_filter = request.query_params.get("type", "all")
         alert_type = None if alert_filter == "all" else alert_filter
+        extra_params = {"type": alert_filter}
+        state = table_state(
+            request,
+            allowed_sort={"id", "timestamp", "symbol", "alert_type", "level", "score", "price", "price_change_15m", "price_change_1h", "price_change_24h", "volume_ratio"},
+            default_sort="timestamp",
+            extra_params=extra_params,
+        )
+        rows, state = query_table_page(
+            storage,
+            state,
+            "market_alerts",
+            search_columns=["symbol", "alert_type", "level", "reason", "suggested_action"],
+            filters={"alert_type": alert_type},
+        )
         return templates.TemplateResponse(
             request,
             "alerts.html",
             base_context(
                 request,
                 settings,
-                rows=storage.get_market_alerts(limit=300, alert_type=alert_type),
+                rows=rows,
+                table=state,
                 alert_filter=alert_filter,
                 title="Market Alerts",
             ),
@@ -345,13 +589,18 @@ def create_app() -> FastAPI:
     def positions_page(request: Request, _: None = Depends(require_admin)) -> Response:
         settings = Settings()
         storage = build_storage(settings)
-        return templates.TemplateResponse(request, "positions.html", base_context(request, settings, rows=storage.get_positions(limit=200), title="Positions"))
+        state = table_state(request, allowed_sort={"id", "symbol", "side", "quantity", "entry_price", "status", "pnl", "opened_at", "closed_at"}, default_sort="id")
+        rows, state = query_table_page(storage, state, "positions", search_columns=["symbol", "side", "status", "exit_reason"])
+        return templates.TemplateResponse(request, "positions.html", base_context(request, settings, rows=rows, table=state, title="Positions"))
 
     @app.get("/trades")
     def trades_page(request: Request, _: None = Depends(require_admin)) -> Response:
         settings = Settings()
         storage = build_storage(settings)
-        return templates.TemplateResponse(request, "trades.html", base_context(request, settings, rows=storage.get_trades(limit=200), title="Trades"))
+        state = table_state(request, allowed_sort={"id", "symbol", "side", "quantity", "entry_price", "exit_price", "pnl", "exit_reason", "closed_at"}, default_sort="id")
+        rows, state = query_table_page(storage, state, "trades", search_columns=["symbol", "side", "exit_reason"])
+        summary = storage.get_paper_performance_summary(leverage=settings.paper_leverage)
+        return templates.TemplateResponse(request, "trades.html", base_context(request, settings, rows=rows, table=state, performance=summary, title="Trades"))
 
     return app
 
@@ -422,6 +671,99 @@ def safe_backtest_path(file_name: str) -> Path:
     if not path.exists():
         raise HTTPException(status_code=404, detail="CSV file not found")
     return path
+
+
+def run_radar_replay(symbol: str, days: int, warmup_bars: int, cooldown_bars: int) -> RadarReplayView:
+    """Download/cache one symbol and replay all radar rules for the web page.
+    为 Web 页面下载/缓存单个币种数据，并回放所有雷达规则。
+    """
+
+    normalized_symbol = normalize_replay_symbol(symbol)
+    bounded_days = min(max(int(days), 1), 90)
+    bounded_warmup = min(max(int(warmup_bars), 20), 500)
+    bounded_cooldown = min(max(int(cooldown_bars), 0), 288)
+    settings = Settings()
+    end_ms = int(time.time() * 1000)
+    start_ms = end_ms - bounded_days * 24 * 60 * 60 * 1000
+    client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy, settings.exchange_network_mode)
+    cache_dir = BASE_DIR / "data" / "replay"
+    report_dir = BASE_DIR / "reports"
+    safe_name = replay_file_symbol(normalized_symbol)
+    run_stamp = datetime.fromtimestamp(end_ms / 1000).strftime("%Y%m%d_%H%M%S")
+
+    klines_path = ensure_klines_csv(client, normalized_symbol, default_cache_path(cache_dir, normalized_symbol, "5m", bounded_days, suffix="klines"), start_ms=start_ms, end_ms=end_ms)
+    oi_5m_path = ensure_oi_csv(client, normalized_symbol, "5m", default_cache_path(cache_dir, normalized_symbol, "5m", bounded_days, suffix="oi"), start_ms=start_ms, end_ms=end_ms)
+    oi_15m_path = ensure_oi_csv(client, normalized_symbol, "15m", default_cache_path(cache_dir, normalized_symbol, "15m", bounded_days, suffix="oi"), start_ms=start_ms, end_ms=end_ms)
+    oi_1h_path = ensure_oi_csv(client, normalized_symbol, "1h", default_cache_path(cache_dir, normalized_symbol, "1h", bounded_days, suffix="oi"), start_ms=start_ms, end_ms=end_ms)
+
+    outcomes = replay_symbol(
+        normalized_symbol,
+        read_klines_csv(klines_path),
+        oi_5m=read_oi_csv(oi_5m_path),
+        oi_15m=read_oi_csv(oi_15m_path),
+        oi_1h=read_oi_csv(oi_1h_path),
+        config=ReplayConfig(min_warmup_bars=bounded_warmup, cooldown_bars=bounded_cooldown),
+        radar_rule_config=load_radar_rule_config(),
+    )
+    summary_rows = summarize(outcomes)
+    detail_path = report_dir / f"radar_replay_{safe_name}_{bounded_days}d_{run_stamp}.csv"
+    summary_path = report_dir / f"radar_replay_{safe_name}_{bounded_days}d_summary_{run_stamp}.csv"
+    write_outcomes(detail_path, outcomes)
+    write_summary(summary_path, summary_rows)
+    return RadarReplayView(
+        symbol=normalized_symbol,
+        days=bounded_days,
+        detail_path=detail_path,
+        summary_path=summary_path,
+        signal_count=len(outcomes),
+        summary=summary_rows,
+        details=replay_details(outcomes, limit=50),
+    )
+
+
+def normalize_replay_symbol(symbol: str) -> str:
+    """Normalize flexible user input into a ccxt USDT swap symbol.
+    将页面输入的币种统一成 ccxt USDT 永续合约格式。
+    """
+
+    text = symbol.strip().upper()
+    if not text:
+        raise ValueError("Symbol is required")
+    if "/" in text:
+        return text if ":" in text else f"{text}:USDT"
+    base = text.removesuffix("USDT")
+    return f"{base}/USDT:USDT"
+
+
+def replay_file_symbol(symbol: str) -> str:
+    """Build a compact symbol slug for report filenames.
+    为报告文件名构建紧凑币种标识。
+    """
+
+    return symbol.upper().replace(":USDT", "").replace("/", "")
+
+
+def replay_details(outcomes: list[ReplayOutcome], limit: int = 50) -> list[dict[str, Any]]:
+    """Convert replay outcomes into rows for the web table.
+    将回放结果转换为页面表格行。
+    """
+
+    rows: list[dict[str, Any]] = []
+    for outcome in outcomes[:limit]:
+        row: dict[str, Any] = {
+            "symbol": outcome.symbol,
+            "signal_type": outcome.signal_type,
+            "level": outcome.level,
+            "score": outcome.score,
+            "trigger_time": outcome.trigger_time,
+            "trigger_price": outcome.trigger_price,
+            "mfe": outcome.max_favorable_return,
+            "mae": outcome.max_adverse_return,
+            "reasons": outcome.reasons,
+        }
+        row.update(outcome.forward_returns)
+        rows.append(row)
+    return rows
 
 
 def read_backtest_summary() -> list[dict[str, str]]:

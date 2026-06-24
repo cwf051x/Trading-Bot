@@ -2,6 +2,9 @@
 主入口测试。
 """
 
+import sys
+
+import app.main as main_module
 from app.exchange.binance import Kline
 from app.main import build_telegram_notifiers, run_paper_cycle
 from app.risk.manager import RiskManager
@@ -32,6 +35,7 @@ class FakeNotifier:
         self.signals = []
         self.orders = []
         self.blocks = []
+        self.errors = []
 
     def notify_signal(self, signal):
         self.signals.append(signal)
@@ -43,6 +47,9 @@ class FakeNotifier:
         self.blocks.append((signal, reason))
 
     def notify_error(self, message):
+        self.errors.append(message)
+
+    def notify_startup(self, mode):
         pass
 
 
@@ -132,3 +139,36 @@ def test_run_paper_cycle_handles_multiple_symbols(tmp_path):
     assert len(storage.get_open_positions("SOL/USDT:USDT")) == 1
     assert len(notifier.signals) == 2
     assert len(notifier.orders) == 2
+
+
+def test_paper_mode_sends_cycle_errors_to_order_notifier(monkeypatch, tmp_path):
+    class FullSettings(FakeTelegramSettings):
+        database_path = tmp_path / "paper.sqlite"
+        strategy_breakout_window = 20
+        strategy_volume_window = 20
+        strategy_volume_multiplier = 2
+        btc_drop_threshold_15m = 0.03
+        strategy_stop_loss_pct = 0.02
+        strategy_take_profit_pct = 0.04
+        account_equity = 10_000
+        paper_leverage = 1
+        binance_api_key = ""
+        binance_api_secret = ""
+        exchange_network_mode = "direct"
+        exchange_proxy = ""
+        default_symbol = "ETH/USDT:USDT"
+        active_symbols = ["ETH/USDT:USDT"]
+        poll_interval_seconds = 60
+
+    alert_notifier = FakeNotifier()
+    order_notifier = FakeNotifier()
+
+    monkeypatch.setattr(sys, "argv", ["trading-bot", "--mode", "paper", "--once"])
+    monkeypatch.setattr(main_module, "get_settings", lambda: FullSettings())
+    monkeypatch.setattr(main_module, "build_telegram_notifiers", lambda _settings: (alert_notifier, order_notifier))
+    monkeypatch.setattr(main_module, "run_paper_cycle", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("binance timeout")))
+
+    main_module.run()
+
+    assert alert_notifier.errors == []
+    assert order_notifier.errors == ["Paper cycle failed: binance timeout"]

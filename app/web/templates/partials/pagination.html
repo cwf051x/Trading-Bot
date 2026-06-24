@@ -1,0 +1,17 @@
+{% if table is defined %}
+<div class="pagination">
+  <div class="pagination-meta">Page {{ table.page }} / {{ table.total_pages }} · {{ table.total }} rows</div>
+  <div class="pagination-actions">
+    {% if table.has_previous %}
+      <a class="button secondary" href="{{ table.page_url(table.page - 1) }}">Previous</a>
+    {% else %}
+      <span class="button secondary disabled">Previous</span>
+    {% endif %}
+    {% if table.has_next %}
+      <a class="button secondary" href="{{ table.page_url(table.page + 1) }}">Next</a>
+    {% else %}
+      <span class="button secondary disabled">Next</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

@@ -29,6 +29,7 @@ def test_settings_defaults(monkeypatch) -> None:
         "DEFAULT_SYMBOL",
         "WATCH_SYMBOLS",
         "DEFAULT_TIMEFRAME",
+        "EXCHANGE_NETWORK_MODE",
         "EXCHANGE_PROXY",
         "POLL_INTERVAL_SECONDS",
         "KLINE_LIMIT",
@@ -128,6 +129,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.kline_limit == 120
     assert settings.watch_symbols == []
     assert settings.active_symbols == ["BTC/USDT:USDT"]
+    assert settings.exchange_network_mode == "direct"
     assert settings.paper_leverage == 1.0
     assert settings.strategy_breakout_window == 20
     assert settings.strategy_volume_multiplier == 1.5
@@ -183,9 +185,15 @@ def test_settings_defaults(monkeypatch) -> None:
 
 
 def test_exchange_proxy_setting() -> None:
-    settings = Settings(EXCHANGE_PROXY="http://127.0.0.1:7890")
+    settings = Settings(EXCHANGE_NETWORK_MODE="proxy", EXCHANGE_PROXY="http://127.0.0.1:7890")
 
+    assert settings.exchange_network_mode == "proxy"
     assert settings.exchange_proxy == "http://127.0.0.1:7890"
+
+
+def test_invalid_exchange_network_mode() -> None:
+    with pytest.raises(ValidationError):
+        Settings(EXCHANGE_NETWORK_MODE="auto")
 
 
 def test_telegram_proxy_setting() -> None:

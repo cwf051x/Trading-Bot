@@ -137,7 +137,7 @@ def run() -> None:
         return
 
     if mode == RunMode.PAPER:
-        client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy)
+        client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy, settings.exchange_network_mode)
         paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
         while True:
             try:
@@ -147,7 +147,9 @@ def run() -> None:
                 return
             except Exception as exc:
                 logger.exception("Paper cycle failed: %s", exc)
-                notifier.notify_error(f"Paper cycle failed: {exc}")
+                # Paper cycle failures belong to the execution/order channel so
+                # radar alerts stay focused on market signals.
+                order_notifier.notify_error(f"Paper cycle failed: {exc}")
             if args.once:
                 return
             time.sleep(settings.poll_interval_seconds)

@@ -16,6 +16,8 @@
   </div>
 </div>
 
+{% include "partials/table_controls.html" %}
+
 {% if rows %}
 <div class="table-wrap fit-table">
   <table class="alert-table">
@@ -31,13 +33,13 @@
     </colgroup>
     <thead>
       <tr>
-        <th>Time</th>
-        <th>Symbol</th>
-        <th>Signal</th>
-        <th>Score</th>
-        <th>Price</th>
+        <th><a class="sort-link" href="{{ table.sort_url('timestamp') }}">Time</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('symbol') }}">Symbol</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('alert_type') }}">Signal</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('score') }}">Score</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('price') }}">Price</a></th>
         <th>Change</th>
-        <th>Market</th>
+        <th><a class="sort-link" href="{{ table.sort_url('volume_ratio') }}">Market</a></th>
         <th>Detail</th>
       </tr>
     </thead>
@@ -79,6 +81,7 @@
     </tbody>
   </table>
 </div>
+{% include "partials/pagination.html" %}
 {% else %}
   <div class="empty">No radar alerts recorded yet.</div>
 {% endif %}

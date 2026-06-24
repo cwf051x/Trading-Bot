@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     default_symbol: str = Field(default="BTC/USDT:USDT", alias="DEFAULT_SYMBOL")
     watch_symbols: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="WATCH_SYMBOLS")
     default_timeframe: str = Field(default="15m", alias="DEFAULT_TIMEFRAME")
+    exchange_network_mode: str = Field(default="direct", alias="EXCHANGE_NETWORK_MODE")
     exchange_proxy: str = Field(default="", alias="EXCHANGE_PROXY")
     poll_interval_seconds: int = Field(default=60, alias="POLL_INTERVAL_SECONDS")
     kline_limit: int = Field(default=120, alias="KLINE_LIMIT")
@@ -160,6 +161,19 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(symbol).strip() for symbol in value if str(symbol).strip()]
         raise TypeError("Alert symbol lists must be comma-separated strings or lists")
+
+    @field_validator("exchange_network_mode")
+    @classmethod
+    def validate_exchange_network_mode(cls, value: str) -> str:
+        """Normalize the exchange network strategy.
+        规范化交易所网络策略，避免本地/生产环境走错代理路径。
+        """
+
+        normalized = value.strip().lower()
+        allowed = {"direct", "proxy", "direct_fallback", "proxy_fallback"}
+        if normalized not in allowed:
+            raise ValueError(f"EXCHANGE_NETWORK_MODE must be one of {', '.join(sorted(allowed))}")
+        return normalized
 
     @property
     def active_symbols(self) -> list[str]:

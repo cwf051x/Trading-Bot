@@ -32,7 +32,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
     storage = SQLiteStorage(settings.database_path)
-    client = BinanceFuturesClient(proxy=settings.exchange_proxy)
+    client = BinanceFuturesClient(proxy=settings.exchange_proxy, network_mode=settings.exchange_network_mode)
     notifier, order_notifier = build_telegram_notifiers(settings)
     paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
     risk_manager = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)

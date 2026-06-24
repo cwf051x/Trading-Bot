@@ -11,39 +11,33 @@ class FakeBinanceUSDM:
         self.config = config
 
 
-def test_binance_client_passes_proxy_to_ccxt(monkeypatch) -> None:
-    captured = {}
-
+def test_binance_client_uses_proxy_exchange_in_proxy_mode(monkeypatch) -> None:
     def fake_factory(config):
-        captured.update(config)
         return FakeBinanceUSDM(config)
 
     import ccxt
 
     monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
 
-    BinanceFuturesClient(proxy="http://127.0.0.1:7890")
+    client = BinanceFuturesClient(proxy="http://127.0.0.1:7890", network_mode="proxy")
 
-    assert captured["proxies"] == {
+    assert client.exchange.config["proxies"] == {
         "http": "http://127.0.0.1:7890",
         "https": "http://127.0.0.1:7890",
     }
 
 
-def test_binance_client_omits_proxy_when_empty(monkeypatch) -> None:
-    captured = {}
-
+def test_binance_client_uses_direct_exchange_in_direct_mode(monkeypatch) -> None:
     def fake_factory(config):
-        captured.update(config)
         return FakeBinanceUSDM(config)
 
     import ccxt
 
     monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
 
-    BinanceFuturesClient()
+    client = BinanceFuturesClient(proxy="http://127.0.0.1:7890", network_mode="direct")
 
-    assert "proxies" not in captured
+    assert "proxies" not in client.exchange.config
 
 
 class FakeResponse:
@@ -60,7 +54,7 @@ def test_open_interest_history_retries_with_proxy_after_direct_timeout(monkeypat
 
     calls = []
 
-    def fake_get(url, params, timeout, proxies):
+    def fake_get(url, *, params, timeout, proxies):
         calls.append({"url": url, "params": params, "timeout": timeout, "proxies": proxies})
         if proxies is None:
             raise requests.ReadTimeout("direct timed out")
@@ -69,9 +63,9 @@ def test_open_interest_history_retries_with_proxy_after_direct_timeout(monkeypat
     import ccxt
 
     monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
-    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(BinanceFuturesClient, "_request_get", staticmethod(fake_get))
 
-    client = BinanceFuturesClient(proxy="http://127.0.0.1:7890")
+    client = BinanceFuturesClient(proxy="http://127.0.0.1:7890", network_mode="direct_fallback")
     points = client.get_open_interest_history("OP/USDT:USDT")
 
     assert len(points) == 1
@@ -79,3 +73,26 @@ def test_open_interest_history_retries_with_proxy_after_direct_timeout(monkeypat
     assert calls[0]["proxies"] is None
     assert calls[1]["proxies"] == {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
     assert calls[1]["params"]["symbol"] == "OPUSDT"
+
+
+def test_open_interest_history_uses_proxy_without_direct_attempt_in_proxy_mode(monkeypatch) -> None:
+    def fake_factory(config):
+        return FakeBinanceUSDM(config)
+
+    calls = []
+
+    def fake_get(url, *, params, timeout, proxies):
+        calls.append({"url": url, "params": params, "timeout": timeout, "proxies": proxies})
+        return FakeResponse()
+
+    import ccxt
+
+    monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
+    monkeypatch.setattr(BinanceFuturesClient, "_request_get", staticmethod(fake_get))
+
+    client = BinanceFuturesClient(proxy="http://127.0.0.1:7890", network_mode="proxy")
+    points = client.get_open_interest_history("OP/USDT:USDT")
+
+    assert len(points) == 1
+    assert len(calls) == 1
+    assert calls[0]["proxies"] == {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}

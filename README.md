@@ -39,7 +39,7 @@ BINANCE_API_KEY=
 BINANCE_API_SECRET=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
-TELEGRAM_PROXY=http://127.0.0.1:7890
+TELEGRAM_PROXY=
 TELEGRAM_ORDER_ENABLED=true
 TELEGRAM_ORDER_BOT_TOKEN=
 TELEGRAM_ORDER_CHAT_ID=
@@ -52,7 +52,8 @@ ACCOUNT_EQUITY=10000
 DEFAULT_SYMBOL=BTC/USDT:USDT
 WATCH_SYMBOLS=BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT
 DEFAULT_TIMEFRAME=15m
-EXCHANGE_PROXY=http://192.168.5.2:7890
+EXCHANGE_NETWORK_MODE=direct
+EXCHANGE_PROXY=
 POLL_INTERVAL_SECONDS=60
 KLINE_LIMIT=120
 PAPER_LEVERAGE=1
@@ -116,7 +117,9 @@ ALERT_HOURLY_T4_OI_CHANGE_24H=0.40
 
 不要提交 `.env`。项目已在 `.gitignore` 中排除该文件。
 
-`EXCHANGE_PROXY` 用于让 ccxt 强制走代理访问 Binance。Docker/Colima 通常使用 `http://192.168.5.2:7890`，本机直接运行通常使用 `http://127.0.0.1:7890`。服务器部署且网络可直连 Binance 时可以留空。
+`EXCHANGE_NETWORK_MODE` 决定 Binance 行情接口的网络路径：`direct` 强制直连，`proxy` 强制代理，`direct_fallback` 先直连失败后代理，`proxy_fallback` 先代理失败后直连。本地如果直连 Binance 必失败，建议使用 `EXCHANGE_NETWORK_MODE=proxy`，避免每个请求先等待直连超时；Vultr 日本区生产环境建议使用 `direct`。
+
+`EXCHANGE_PROXY` 是 Binance 行情接口代理地址，只在 `proxy` / `direct_fallback` / `proxy_fallback` 模式下使用。本机直接运行通常使用 `http://127.0.0.1:7890`，Docker/Colima 容器里才需要改成宿主机代理地址，例如 `http://192.168.5.2:7890`。生产直连时留空。
 
 `TELEGRAM_PROXY` 用于让 Telegram 通知请求强制走代理。本机运行通常使用 `http://127.0.0.1:7890`；Docker/Colima 容器里才需要改成宿主机代理地址，例如 `http://192.168.5.2:7890`。
 
@@ -228,14 +231,22 @@ Telegram 示例：
 本地启动管理后台：
 
 ```bash
-uvicorn app.web.server:app --host 127.0.0.1 --port 8000
+./scripts/start_web.sh
 ```
 
 打开：
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8011
 ```
+
+如需指定端口：
+
+```bash
+./scripts/start_web.sh 8010
+```
+
+启动脚本会先检查目标端口；如果该端口上已经有当前项目的 Web Admin，会先停止旧进程再启动，避免本地同时跑多个后台页面。
 
 后台第一版包含：
 
@@ -296,6 +307,7 @@ ssh -L 8000:127.0.0.1:8000 root@你的Vultr公网IP
 Vultr 日本区服务器通常可以直接访问 Binance 和 Telegram，生产模拟盘配置里代理应保持为空：
 
 ```dotenv
+EXCHANGE_NETWORK_MODE=direct
 EXCHANGE_PROXY=
 TELEGRAM_PROXY=
 TELEGRAM_ORDER_ENABLED=true
@@ -326,6 +338,54 @@ docker compose down
 ```
 
 更详细的服务器上线步骤见 [Vultr Ubuntu 部署上线教程](docs/vultr_deployment_guide.md)。
+
+## 雷达历史回放
+
+可以回放三个雷达规则，评估命中后的后验收益和及时性。默认用 Binance 下载最近 N 天 5m K 线和 5m/15m/1h OI，并缓存到 `data/replay/`；如果传入本地 CSV，则进入离线模式，不会自动补下载缺失文件。
+
+自动下载示例：
+
+```bash
+python scripts/replay_radar_signals.py \
+  --symbol BTC/USDT:USDT \
+  --days 30 \
+  --output reports/radar_replay_BTCUSDT.csv \
+  --summary-output reports/radar_replay_BTCUSDT_summary.csv
+```
+
+下载缓存文件命名类似：
+
+```text
+data/replay/BTCUSDT_klines_5m_30d.csv
+data/replay/BTCUSDT_oi_5m_30d.csv
+data/replay/BTCUSDT_oi_15m_30d.csv
+data/replay/BTCUSDT_oi_1h_30d.csv
+```
+
+5m K 线 CSV 需要包含：
+
+```text
+timestamp,open,high,low,close,volume
+```
+
+OI CSV 可选，需要包含：
+
+```text
+timestamp,open_interest
+```
+
+离线 CSV 示例：
+
+```bash
+python scripts/replay_radar_signals.py \
+  --symbol BTC/USDT:USDT \
+  --klines-5m data/replay/BTCUSDT_5m.csv \
+  --oi-5m data/replay/BTCUSDT_oi_5m.csv \
+  --output reports/radar_replay_BTCUSDT.csv \
+  --summary-output reports/radar_replay_BTCUSDT_summary.csv
+```
+
+明细报告会记录每条信号的 `trigger_price`、未来 15m/30m/1h/4h/24h 收益、最大有利涨幅 `mfe` 和最大不利回撤 `mae`；汇总报告会按 `signal_type` 输出触发次数、1h 胜率、平均收益和 profit factor。
 
 ## 测试
 

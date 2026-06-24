@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from app.notify.telegram import TelegramNotifier
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.base import Signal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -106,7 +109,12 @@ class PaperTradingEngine:
             signal.timestamp,
         )
         if self.notifier:
-            self.notifier.notify_paper_order(order)
+            # 订单通知和下单记录分开处理，避免 Telegram 抖动影响模拟盘落库。
+            sent = self.notifier.notify_paper_order(order)
+            if sent:
+                logger.info("Paper order #%s Telegram notification sent", order.id)
+            else:
+                logger.warning("Paper order #%s Telegram notification failed or disabled", order.id)
         return order
 
     def update_open_positions(self, symbol: str, price: float, timestamp: int) -> list[int]:

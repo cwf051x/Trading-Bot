@@ -1,18 +1,19 @@
 {% if rows %}
+{% include "partials/table_controls.html" %}
 <div class="table-wrap">
   <table>
     <thead>
       <tr>
-        <th>ID</th>
-        <th>Symbol</th>
-        <th>Side</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('id') }}">ID</a>{% else %}ID{% endif %}</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('symbol') }}">Symbol</a>{% else %}Symbol{% endif %}</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('side') }}">Side</a>{% else %}Side{% endif %}</th>
         <th>Quantity</th>
-        <th>Entry</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('entry_price') }}">Entry</a>{% else %}Entry{% endif %}</th>
         <th>Stop</th>
         <th>Take Profit</th>
-        <th>Status</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('status') }}">Status</a>{% else %}Status{% endif %}</th>
         <th>Exit</th>
-        <th>PnL</th>
+        <th>{% if table is defined %}<a class="sort-link" href="{{ table.sort_url('pnl') }}">PnL</a>{% else %}PnL{% endif %}</th>
       </tr>
     </thead>
     <tbody>
@@ -21,18 +22,20 @@
         <td>{{ row.id }}</td>
         <td>{{ row.symbol }}</td>
         <td>{{ row.side }}</td>
-        <td>{{ row.quantity }}</td>
-        <td>{{ row.entry_price }}</td>
-        <td>{{ row.stop_loss }}</td>
-        <td>{{ row.take_profit }}</td>
+        <td>{{ row.quantity | compact_number }}</td>
+        <td>{{ row.entry_price | compact_price }}</td>
+        <td>{{ row.stop_loss | compact_price }}</td>
+        <td>{{ row.take_profit | compact_price }}</td>
         <td>{{ row.status }}</td>
-        <td>{{ row.exit_price }}</td>
-        <td>{{ row.pnl }}</td>
+        <td>{{ row.exit_price | compact_price }}</td>
+        <td>{{ row.pnl | compact_number }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% include "partials/pagination.html" %}
 {% else %}
+{% include "partials/table_controls.html" %}
 <div class="empty">No positions yet.</div>
 {% endif %}
