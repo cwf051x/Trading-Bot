@@ -31,7 +31,10 @@ def test_settings_defaults(monkeypatch) -> None:
         "DEFAULT_TIMEFRAME",
         "EXCHANGE_NETWORK_MODE",
         "EXCHANGE_PROXY",
+        "EXCHANGE_REQUEST_RETRIES",
+        "EXCHANGE_RETRY_DELAY_SECONDS",
         "POLL_INTERVAL_SECONDS",
+        "PAPER_ERROR_NOTIFY_CONSECUTIVE_FAILURES",
         "KLINE_LIMIT",
         "PAPER_LEVERAGE",
         "STRATEGY_BREAKOUT_WINDOW",
@@ -130,6 +133,9 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.watch_symbols == []
     assert settings.active_symbols == ["BTC/USDT:USDT"]
     assert settings.exchange_network_mode == "direct"
+    assert settings.exchange_request_retries == 2
+    assert settings.exchange_retry_delay_seconds == 1.0
+    assert settings.paper_error_notify_consecutive_failures == 3
     assert settings.paper_leverage == 1.0
     assert settings.strategy_breakout_window == 20
     assert settings.strategy_volume_multiplier == 1.5

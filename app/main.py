@@ -137,19 +137,33 @@ def run() -> None:
         return
 
     if mode == RunMode.PAPER:
-        client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy, settings.exchange_network_mode)
+        client = BinanceFuturesClient(
+            settings.binance_api_key,
+            settings.binance_api_secret,
+            settings.exchange_proxy,
+            settings.exchange_network_mode,
+            settings.exchange_request_retries,
+            settings.exchange_retry_delay_seconds,
+        )
         paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+        paper_error_streak = 0
         while True:
             try:
                 run_paper_cycle(client, paper, strategy, risk_manager, notifier, settings)
+                paper_error_streak = 0
             except KeyboardInterrupt:
                 logger.info("Paper mode stopped by user")
                 return
             except Exception as exc:
+                paper_error_streak += 1
                 logger.exception("Paper cycle failed: %s", exc)
-                # Paper cycle failures belong to the execution/order channel so
-                # radar alerts stay focused on market signals.
-                order_notifier.notify_error(f"Paper cycle failed: {exc}")
+                notify_threshold = max(1, settings.paper_error_notify_consecutive_failures)
+                if paper_error_streak >= notify_threshold:
+                    # Paper cycle failures belong to the execution/order channel so
+                    # radar alerts stay focused on market signals.
+                    order_notifier.notify_error(f"Paper cycle failed {paper_error_streak}x consecutively: {exc}")
+                else:
+                    logger.warning("Paper cycle failure notification suppressed streak=%s/%s", paper_error_streak, notify_threshold)
             if args.once:
                 return
             time.sleep(settings.poll_interval_seconds)

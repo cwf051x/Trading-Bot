@@ -48,6 +48,35 @@ class FakeResponse:
         return [{"timestamp": 1_700_000_000_000, "sumOpenInterest": "123.45"}]
 
 
+def test_klines_retry_transient_exchange_failure(monkeypatch) -> None:
+    class FlakyExchange:
+        def __init__(self, config):
+            self.config = config
+            self.calls = 0
+
+        def fetch_ohlcv(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary binance failure")
+            return [[1_700_000_000_000, 1, 2, 0.5, 1.5, 100]]
+
+    exchange = FlakyExchange({})
+
+    def fake_factory(config):
+        exchange.config = config
+        return exchange
+
+    import ccxt
+
+    monkeypatch.setattr(ccxt, "binanceusdm", fake_factory)
+
+    client = BinanceFuturesClient(network_mode="direct", request_retries=1, retry_delay_seconds=0)
+    klines = client.get_klines("BTC/USDT:USDT", "15m", limit=2)
+
+    assert exchange.calls == 2
+    assert klines[0].close == 1.5
+
+
 def test_open_interest_history_retries_with_proxy_after_direct_timeout(monkeypatch) -> None:
     def fake_factory(config):
         return FakeBinanceUSDM(config)

@@ -156,6 +156,9 @@ def test_paper_mode_sends_cycle_errors_to_order_notifier(monkeypatch, tmp_path):
         binance_api_secret = ""
         exchange_network_mode = "direct"
         exchange_proxy = ""
+        exchange_request_retries = 0
+        exchange_retry_delay_seconds = 0
+        paper_error_notify_consecutive_failures = 1
         default_symbol = "ETH/USDT:USDT"
         active_symbols = ["ETH/USDT:USDT"]
         poll_interval_seconds = 60
@@ -171,4 +174,4 @@ def test_paper_mode_sends_cycle_errors_to_order_notifier(monkeypatch, tmp_path):
     main_module.run()
 
     assert alert_notifier.errors == []
-    assert order_notifier.errors == ["Paper cycle failed: binance timeout"]
+    assert order_notifier.errors == ["Paper cycle failed 1x consecutively: binance timeout"]

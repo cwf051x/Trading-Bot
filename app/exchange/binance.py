@@ -5,6 +5,7 @@ Binance USDT-M 永续合约行情客户端。
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
@@ -45,7 +46,15 @@ class BinanceFuturesClient:
     基于 ccxt 的同步 Binance USDT-M 永续合约客户端。
     """
 
-    def __init__(self, api_key: str = "", api_secret: str = "", proxy: str = "", network_mode: str = "direct") -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        api_secret: str = "",
+        proxy: str = "",
+        network_mode: str = "direct",
+        request_retries: int = 2,
+        retry_delay_seconds: float = 1.0,
+    ) -> None:
         try:
             import ccxt  # type: ignore
         except ImportError as exc:
@@ -53,6 +62,8 @@ class BinanceFuturesClient:
 
         self.proxy = proxy
         self.network_mode = self._normalize_network_mode(network_mode)
+        self.request_retries = max(0, request_retries)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
         base_config: dict[str, Any] = {
             "apiKey": api_key,
             "secret": api_secret,
@@ -179,22 +190,46 @@ class BinanceFuturesClient:
         """
 
         if self.network_mode == "proxy":
-            return operation(self._require_proxy_exchange(description))
+            return self._call_exchange_with_retries(self._require_proxy_exchange(description), operation, description, "proxy")
         if self.network_mode == "proxy_fallback":
             try:
-                return operation(self._require_proxy_exchange(description))
+                return self._call_exchange_with_retries(self._require_proxy_exchange(description), operation, description, "proxy")
             except Exception as proxy_exc:
                 logger.info("[network] proxy exchange request failed for %s: %s, retrying direct", description, proxy_exc)
-                return operation(self._direct_exchange)
+                return self._call_exchange_with_retries(self._direct_exchange, operation, description, "direct")
         if self.network_mode == "direct_fallback":
             try:
-                return operation(self._direct_exchange)
+                return self._call_exchange_with_retries(self._direct_exchange, operation, description, "direct")
             except Exception as direct_exc:
                 if not self._proxy_exchange:
                     raise
                 logger.info("[network] direct exchange request failed for %s: %s, retrying proxy", description, direct_exc)
-                return operation(self._proxy_exchange)
-        return operation(self._direct_exchange)
+                return self._call_exchange_with_retries(self._proxy_exchange, operation, description, "proxy")
+        return self._call_exchange_with_retries(self._direct_exchange, operation, description, "direct")
+
+    def _call_exchange_with_retries(self, exchange: Any, operation: Callable[[Any], T], description: str, route: str) -> T:
+        """Retry transient ccxt failures before surfacing an exchange error.
+        对 ccxt 请求做短重试，减少偶发 Binance K 线请求失败导致整轮 paper cycle 失败。
+        """
+
+        attempts = self.request_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return operation(exchange)
+            except Exception as exc:
+                if attempt >= attempts:
+                    raise
+                logger.info(
+                    "[network] %s exchange request failed for %s attempt=%s/%s: %s; retrying",
+                    route,
+                    description,
+                    attempt,
+                    attempts,
+                    exc.__class__.__name__,
+                )
+                if self.retry_delay_seconds > 0:
+                    time.sleep(self.retry_delay_seconds)
+        raise RuntimeError("unreachable exchange retry state")
 
     def _request_get_with_policy(self, url: str, *, params: dict[str, Any], direct_timeout: int, proxy_timeout: int, description: str) -> requests.Response:
         """Run REST requests with the same network policy as ccxt calls.

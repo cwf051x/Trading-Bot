@@ -59,7 +59,14 @@ def main() -> None:
 
     if auto_download:
         settings = Settings()
-        client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy, settings.exchange_network_mode)
+        client = BinanceFuturesClient(
+            settings.binance_api_key,
+            settings.binance_api_secret,
+            settings.exchange_proxy,
+            settings.exchange_network_mode,
+            settings.exchange_request_retries,
+            settings.exchange_retry_delay_seconds,
+        )
         klines_path = ensure_klines_csv(
             client,
             args.symbol,

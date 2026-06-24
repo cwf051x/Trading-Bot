@@ -685,7 +685,14 @@ def run_radar_replay(symbol: str, days: int, warmup_bars: int, cooldown_bars: in
     settings = Settings()
     end_ms = int(time.time() * 1000)
     start_ms = end_ms - bounded_days * 24 * 60 * 60 * 1000
-    client = BinanceFuturesClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange_proxy, settings.exchange_network_mode)
+    client = BinanceFuturesClient(
+        settings.binance_api_key,
+        settings.binance_api_secret,
+        settings.exchange_proxy,
+        settings.exchange_network_mode,
+        settings.exchange_request_retries,
+        settings.exchange_retry_delay_seconds,
+    )
     cache_dir = BASE_DIR / "data" / "replay"
     report_dir = BASE_DIR / "reports"
     safe_name = replay_file_symbol(normalized_symbol)
