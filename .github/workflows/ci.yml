@@ -31,7 +31,10 @@ jobs:
         run: python -m compileall app scripts
 
       - name: Validate Docker Compose config
-        run: docker compose config
+        run: |
+          # CI 没有真实 .env，用模板文件只验证 compose 结构，不引入生产密钥。
+          cp .env.example .env
+          docker compose config
 
       - name: Guard against real trading calls
         run: python scripts/check_no_real_trading_calls.py
