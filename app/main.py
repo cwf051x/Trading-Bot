@@ -12,6 +12,7 @@ from typing import Any
 
 from app.backtest.engine import BacktestEngine
 from app.config import RunMode, get_settings
+from app.data.closed_candles import closed_klines
 from app.execution.paper import PaperTradingEngine
 from app.exchange.binance import BinanceFuturesClient
 from app.notify.telegram import TelegramNotifier
@@ -66,10 +67,10 @@ def run_paper_cycle(
     """
 
     watch_symbols = list(getattr(settings, "active_symbols", [settings.default_symbol]))
-    btc_klines = client.get_klines("BTC/USDT:USDT", "15m", limit=2)
+    btc_klines = closed_klines(client.get_klines("BTC/USDT:USDT", "15m", limit=2), "15m")
     current_prices: dict[str, float] = {}
     for symbol in watch_symbols:
-        klines = client.get_klines(symbol, settings.default_timeframe, limit=settings.kline_limit)
+        klines = closed_klines(client.get_klines(symbol, settings.default_timeframe, limit=settings.kline_limit), settings.default_timeframe)
         if klines:
             current_prices[symbol] = klines[-1].close
             # 使用已完成 K 线的 high/low 做模拟触发，避免只看 close 漏掉盘中止损止盈。

@@ -3,6 +3,8 @@
 """
 
 from pathlib import Path
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 from app.execution.paper import PaperTradingEngine
 from app.storage.sqlite import SQLiteStorage
@@ -86,6 +88,93 @@ def test_create_open_order_position_skips_existing_open_position_atomically(tmp_
     assert second is None
     assert len(storage.get_orders()) == 1
     assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
+
+
+def test_initialize_reports_duplicate_open_positions_before_unique_index(tmp_path: Path) -> None:
+    database_path = tmp_path / "dirty.sqlite"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss REAL NOT NULL,
+                take_profit REAL,
+                status TEXT NOT NULL,
+                exit_price REAL,
+                pnl REAL,
+                exit_reason TEXT,
+                opened_at INTEGER NOT NULL DEFAULT 0,
+                closed_at INTEGER
+            )
+            """
+        )
+        for order_id in [1, 2]:
+            connection.execute(
+                """
+                INSERT INTO positions(order_id, symbol, side, quantity, entry_price, stop_loss, take_profit, status, opened_at)
+                VALUES (?, 'ETH/USDT:USDT', 'long', 1, 100, 98, 104, 'open', ?)
+                """,
+                (order_id, order_id),
+            )
+
+    storage = SQLiteStorage(database_path)
+
+    try:
+        storage.initialize()
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("duplicate open positions should be reported before creating unique index")
+
+    assert "duplicate open positions" in message
+    assert "ETH/USDT:USDT" in message
+    assert "long" in message
+
+
+def test_concurrent_create_open_order_position_allows_only_one_writer(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+
+    def create_once(index: int):
+        return storage.create_open_order_position(
+            symbol="ETH/USDT:USDT",
+            side="long",
+            quantity=1,
+            entry_price=100 + index,
+            stop_loss=98,
+            take_profit=104,
+            reason=f"thread-{index}",
+            timestamp=index,
+        )
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(executor.map(create_once, range(10)))
+
+    assert sum(result is not None for result in results) == 1
+    assert len(storage.get_orders()) == 1
+    assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
+
+
+def test_concurrent_close_position_writes_only_one_trade(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "test", 1)
+    position_id = storage.create_position(order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
+
+    def close_once(index: int) -> bool:
+        return storage.close_position(position_id, 104 + index, 8 + index, "take_profit", 10 + index)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(executor.map(close_once, range(10)))
+
+    assert sum(results) == 1
+    assert len(storage.get_trades()) == 1
+    assert storage.get_positions()[0]["status"] == "closed"
 
 
 def test_paper_account_snapshot_tracks_margin_and_pnl(tmp_path: Path) -> None:

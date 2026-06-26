@@ -93,6 +93,7 @@ class MarketAlertRadar:
                 logger.info("Alert radar disabled by ALERT_RADAR_ENABLED=false")
                 return []
             metrics_rows = self.scanner.scan()
+            current_prices = {metrics.symbol: metrics.price for metrics in metrics_rows}
             scanner_profile = getattr(self.scanner, "last_profile", None)
             if scanner_profile is not None:
                 profiler.merge(scanner_profile)
@@ -130,7 +131,7 @@ class MarketAlertRadar:
                 with profiler.measure("store_alerts"):
                     self.state.record_alert(persisted_alert, sent_to_telegram=sent_to_telegram)
                 with profiler.measure("auto_paper"):
-                    self._process_auto_paper_order(persisted_alert)
+                    self._process_auto_paper_order(persisted_alert, current_prices=current_prices)
                 notifier_enabled = bool(getattr(self.notifier, "enabled", False))
                 if should_send and not sent_to_telegram and notifier_enabled:
                     logger.warning("Alert %s %s qualified for Telegram but send failed", alert.symbol, alert.alert_type.value)
@@ -150,7 +151,7 @@ class MarketAlertRadar:
             profiler.set_meta(alerts=len(alerts))
             profiler.log(logger, total_seconds=time.perf_counter() - cycle_started_at)
 
-    def _process_auto_paper_order(self, alert: AlertSignal) -> None:
+    def _process_auto_paper_order(self, alert: AlertSignal, current_prices: dict[str, float] | None = None) -> None:
         """Create a simulated order for actionable alert entries.
         根据可交易的 alert 创建模拟订单。
         """
@@ -182,7 +183,7 @@ class MarketAlertRadar:
             reason=f"alert {alert.alert_type.value}: {alert.suggested_action}",
             timestamp=alert.timestamp,
         )
-        decision = self.risk_manager.evaluate(signal, market_context={})
+        decision = self.risk_manager.evaluate(signal, market_context={"current_prices": current_prices or {alert.symbol: alert.price}})
         if not decision.allowed:
             logger.info("Alert %s %s paper order blocked by risk: %s", alert.symbol, alert.alert_type.value, decision.reason)
             return

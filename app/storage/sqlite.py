@@ -93,6 +93,7 @@ class SQLiteStorage:
                 )
                 """
             )
+            self._raise_for_duplicate_open_positions(connection)
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_one_open_symbol_side
@@ -100,6 +101,7 @@ class SQLiteStorage:
                 WHERE status = 'open'
                 """
             )
+
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS market_alerts (
@@ -144,6 +146,29 @@ class SQLiteStorage:
                 )
                 """
             )
+
+    def _raise_for_duplicate_open_positions(self, connection: sqlite3.Connection) -> None:
+        """Fail clearly when old data would violate the open-position unique index.
+        老库如果已有同 symbol/side 多个 open 仓位，先给出清晰诊断，不静默删用户数据。
+        """
+
+        rows = connection.execute(
+            """
+            SELECT symbol, side, COUNT(*) AS count
+            FROM positions
+            WHERE status = 'open'
+            GROUP BY symbol, side
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, symbol, side
+            """
+        ).fetchall()
+        if not rows:
+            return
+        details = ", ".join(f"{row['symbol']} {row['side']} count={row['count']}" for row in rows)
+        raise ValueError(
+            "duplicate open positions detected before creating idx_positions_one_open_symbol_side: "
+            f"{details}. Close or mark duplicate rows manually before starting the service."
+        )
 
     def create_order(
         self,

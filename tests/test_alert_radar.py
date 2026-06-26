@@ -172,6 +172,29 @@ def test_radar_does_not_create_paper_order_for_risk_only_trend_alert(tmp_path) -
     assert storage.get_orders() == []
 
 
+def test_radar_auto_paper_passes_current_alert_price_to_risk(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+
+    class RecordingRiskManager:
+        def __init__(self) -> None:
+            self.market_context = None
+
+        def evaluate(self, signal, market_context=None):
+            self.market_context = market_context
+            return type("Decision", (), {"allowed": False, "reason": "recorded", "position_size": 0.0})()
+
+    risk = RecordingRiskManager()
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings, paper=paper, risk_manager=risk)
+    radar.rules = EntryRules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert risk.market_context == {"current_prices": {"COIN/USDT:USDT": 1.0}}
+
+
 def test_storage_cooldown_allows_level_upgrade(tmp_path) -> None:
     settings = Settings(_env_file=None, ALERT_COOLDOWN_A_SECONDS=300, ALERT_COOLDOWN_B_SECONDS=600, ALERT_COOLDOWN_C_SECONDS=1800)
     storage = SQLiteStorage(tmp_path / "radar.sqlite")

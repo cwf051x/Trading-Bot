@@ -109,3 +109,18 @@ def test_risk_cooldown_reads_recent_closed_trades(tmp_path) -> None:
 
     assert decision.allowed is False
     assert "cooldown" in decision.reason
+
+
+def test_risk_uses_current_prices_for_existing_position_exposure(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("BTC/USDT:USDT", "long", 1, 100, 95, 110, "open", "existing", 1)
+    storage.create_position(order_id, "BTC/USDT:USDT", "long", 1, 100, 95, 110, 1)
+    manager = RiskManager(account_equity=1_000, storage=storage, risk_per_trade_pct=0.001, max_total_exposure_pct=0.20, max_symbol_position_pct=0.50)
+
+    stale_price_decision = manager.evaluate(signal(stop_loss=99), market_context={"current_prices": {"BTC/USDT:USDT": 100}})
+    fresh_price_decision = manager.evaluate(signal(stop_loss=99), market_context={"current_prices": {"BTC/USDT:USDT": 150}})
+
+    assert stale_price_decision.allowed is True
+    assert fresh_price_decision.allowed is False
+    assert "total exposure" in fresh_price_decision.reason

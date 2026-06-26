@@ -34,5 +34,4 @@ jobs:
         run: docker compose config
 
       - name: Guard against real trading calls
-        run: |
-          ! grep -RInE 'exchange\.create_order|set_leverage|create_market_order|market order' app scripts tests
+        run: python scripts/check_no_real_trading_calls.py
