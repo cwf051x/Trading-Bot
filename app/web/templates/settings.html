@@ -13,6 +13,7 @@
 {% endif %}
 
 <form method="post" action="/settings">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <section class="panel">
     <h2 style="margin-top: 0;">Runtime</h2>
     <div class="form-grid">

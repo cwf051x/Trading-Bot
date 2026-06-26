@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from app.exchange.binance import Kline
 from app.risk.manager import RiskManager
+from app.storage.sqlite import SQLiteStorage
 from app.strategies.base import Signal
 
 
@@ -54,3 +55,57 @@ def test_risk_blocks_btc_dump_for_longs() -> None:
 
     assert decision.allowed is False
     assert "BTC" in decision.reason
+
+
+def test_risk_blocks_when_max_open_positions_reached(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("BTC/USDT:USDT", "long", 1, 100, 95, 110, "open", "existing", 1)
+    storage.create_position(order_id, "BTC/USDT:USDT", "long", 1, 100, 95, 110, 1)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_open_positions=1)
+
+    decision = manager.evaluate(signal())
+
+    assert decision.allowed is False
+    assert "max open positions" in decision.reason
+
+
+def test_risk_blocks_total_exposure_limit(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("BTC/USDT:USDT", "long", 15, 100, 95, 110, "open", "existing", 1)
+    storage.create_position(order_id, "BTC/USDT:USDT", "long", 15, 100, 95, 110, 1)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_total_exposure_pct=0.20)
+
+    decision = manager.evaluate(signal(stop_loss=99))
+
+    assert decision.allowed is False
+    assert "total exposure" in decision.reason
+
+
+def test_risk_blocks_symbol_exposure_limit(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("ETH/USDT:USDT", "long", 8, 100, 95, 110, "open", "existing", 1)
+    storage.create_position(order_id, "ETH/USDT:USDT", "long", 8, 100, 95, 110, 1)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_symbol_position_pct=0.10)
+
+    decision = manager.evaluate(signal(stop_loss=99))
+
+    assert decision.allowed is False
+    assert "symbol exposure" in decision.reason
+
+
+def test_risk_cooldown_reads_recent_closed_trades(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    for index in range(3):
+        order_id = storage.create_order(f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, "open", "loss", index)
+        position_id = storage.create_position(order_id, f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, index)
+        storage.close_position(position_id, 95, -5, "stop_loss", index + 10)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_consecutive_losses=3)
+
+    decision = manager.evaluate(signal())
+
+    assert decision.allowed is False
+    assert "cooldown" in decision.reason

@@ -72,13 +72,14 @@ def run_paper_cycle(
         klines = client.get_klines(symbol, settings.default_timeframe, limit=settings.kline_limit)
         if klines:
             current_prices[symbol] = klines[-1].close
-            paper.update_open_positions(symbol, klines[-1].close, klines[-1].timestamp)
+            # 使用已完成 K 线的 high/low 做模拟触发，避免只看 close 漏掉盘中止损止盈。
+            paper.update_open_positions(symbol, klines[-1].close, klines[-1].timestamp, high=klines[-1].high, low=klines[-1].low)
         signal = strategy.generate_signal({"symbol": symbol, "klines": klines, "btc_klines": btc_klines})
         if signal.is_actionable:
             notifier.notify_signal(signal)
         else:
             logger.info("Signal %s %s: %s", signal.symbol, signal.side, signal.reason)
-        decision = risk_manager.evaluate(signal=signal, market_context={"btc_klines": btc_klines})
+        decision = risk_manager.evaluate(signal=signal, market_context={"btc_klines": btc_klines, "current_prices": current_prices})
         if decision.allowed:
             paper.process_signal(signal, quantity=decision.position_size)
         elif signal.is_actionable:
@@ -123,7 +124,16 @@ def run() -> None:
     )
     risk_manager = RiskManager(
         account_equity=settings.account_equity,
+        risk_per_trade_pct=getattr(settings, "risk_per_trade_pct", 0.01),
+        max_symbol_position_pct=getattr(settings, "risk_max_symbol_position_pct", 0.10),
+        max_total_exposure_pct=getattr(settings, "risk_max_total_exposure_pct", 0.50),
+        max_open_positions=getattr(settings, "risk_max_open_positions", 5),
+        max_consecutive_losses=getattr(settings, "risk_max_consecutive_losses", 3),
         btc_drop_threshold_15m=settings.btc_drop_threshold_15m,
+        storage=storage,
+        fee_rate=getattr(settings, "paper_fee_rate", 0.0),
+        slippage_pct=getattr(settings, "paper_slippage_pct", 0.0),
+        funding_rate=getattr(settings, "paper_funding_rate", 0.0),
     )
 
     if mode == RunMode.BACKTEST:
@@ -145,7 +155,15 @@ def run() -> None:
             settings.exchange_request_retries,
             settings.exchange_retry_delay_seconds,
         )
-        paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+        paper = PaperTradingEngine(
+            storage=storage,
+            notifier=order_notifier,
+            initial_equity=settings.account_equity,
+            leverage=settings.paper_leverage,
+            fee_rate=getattr(settings, "paper_fee_rate", 0.0),
+            slippage_pct=getattr(settings, "paper_slippage_pct", 0.0),
+            funding_rate=getattr(settings, "paper_funding_rate", 0.0),
+        )
         paper_error_streak = 0
         while True:
             try:

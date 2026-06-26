@@ -40,3 +40,21 @@ pump_pullback_second_wave:
     assert config["hourly_trend"]["t2"]["price_change_12h"] == 0.20
     assert config["pump_pullback_second_wave"]["first_pump"]["min_change"] == 0.2
     assert config["pump_pullback_second_wave"]["p3"]["volume_ratio_15m"] == 3.0
+
+
+def test_legacy_hourly_env_does_not_override_yaml_rule_source(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ALERT_HOURLY_T1_PRICE_CHANGE_6H", "0.99")
+    config_path = tmp_path / "radar_rules.yaml"
+    config_path.write_text(
+        """
+hourly_trend:
+  t1:
+    price_change_6h: 0.11
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = load_radar_rule_config(config_path)
+
+    assert config["hourly_trend"]["t1"]["price_change_6h"] == 0.11

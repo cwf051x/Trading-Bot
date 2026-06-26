@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 
 ALLOWED_ENV_KEYS = {
@@ -47,25 +48,41 @@ ALLOWED_ENV_KEYS = {
     "ALERT_PULLBACK_VOLUME_CONTRACTION_MAX",
     "ALERT_OVERHEAT_RSI",
     "ALERT_FUNDING_RATE_TTL_SECONDS",
-    "ALERT_RULE_HOURLY_TREND_ENABLED",
-    "ALERT_HOURLY_T1_PRICE_CHANGE_6H",
-    "ALERT_HOURLY_T1_MA7_MA25_MIN_RATIO",
-    "ALERT_HOURLY_T1_VOLUME_MULTIPLIER",
-    "ALERT_HOURLY_T1_OI_CHANGE_6H",
-    "ALERT_HOURLY_T2_PRICE_CHANGE_12H",
-    "ALERT_HOURLY_T2_BULLISH_COUNT_12",
-    "ALERT_HOURLY_T2_OI_CHANGE_12H",
-    "ALERT_HOURLY_T2_VOLUME_EXPANSION",
-    "ALERT_HOURLY_T3_PRICE_CHANGE_12H",
-    "ALERT_HOURLY_T3_OI_CHANGE_12H",
-    "ALERT_HOURLY_T3_PULLBACK_MIN",
-    "ALERT_HOURLY_T3_PULLBACK_MAX",
-    "ALERT_HOURLY_T3_OI_PULLBACK_MAX",
-    "ALERT_HOURLY_T4_PRICE_CHANGE_24H",
-    "ALERT_HOURLY_T4_MA25_DEVIATION",
-    "ALERT_HOURLY_T4_RSI6",
-    "ALERT_HOURLY_T4_RSI24",
-    "ALERT_HOURLY_T4_OI_CHANGE_24H",
+}
+
+BOOL_KEYS = {"ALERT_RADAR_ENABLED", "ALERT_SEND_A_LEVEL", "ALERT_SEND_B_LEVEL", "ALERT_SEND_C_LEVEL"}
+INT_MIN = {
+    "POLL_INTERVAL_SECONDS": 1,
+    "KLINE_LIMIT": 2,
+    "STRATEGY_BREAKOUT_WINDOW": 2,
+    "STRATEGY_VOLUME_WINDOW": 2,
+    "ALERT_SCAN_INTERVAL_SECONDS": 5,
+    "ALERT_TOP_GAINERS_LIMIT": 1,
+    "ALERT_COOLDOWN_A_SECONDS": 0,
+    "ALERT_COOLDOWN_B_SECONDS": 0,
+    "ALERT_COOLDOWN_C_SECONDS": 0,
+}
+FLOAT_MIN = {
+    "ACCOUNT_EQUITY": 1.0,
+    "BTC_DROP_THRESHOLD_15M": -1.0,
+    "PAPER_LEVERAGE": 1.0,
+    "STRATEGY_VOLUME_MULTIPLIER": 0.0,
+    "STRATEGY_STOP_LOSS_PCT": 0.0,
+    "STRATEGY_TAKE_PROFIT_PCT": 0.0,
+    "ALERT_MIN_24H_QUOTE_VOLUME_USDT": 0.0,
+    "ALERT_SURGE_3M_THRESHOLD": -1.0,
+    "ALERT_SURGE_5M_THRESHOLD": -1.0,
+    "ALERT_SURGE_15M_THRESHOLD": -1.0,
+    "ALERT_VOLUME_RATIO_THRESHOLD": 0.0,
+    "ALERT_PULLBACK_MIN_RATIO": 0.0,
+    "ALERT_PULLBACK_MAX_RATIO": 0.0,
+    "ALERT_BTC_DUMP_15M_THRESHOLD": -1.0,
+    "ALERT_HIGH_RISK_15M_CHANGE": 0.0,
+    "ALERT_HIGH_RISK_1H_CHANGE": 0.0,
+    "ALERT_MIN_BREAKOUT_CLOSE_POSITION": 0.0,
+    "ALERT_SECOND_LEG_MIN_CLOSE_POSITION": 0.0,
+    "ALERT_PULLBACK_VOLUME_CONTRACTION_MAX": 0.0,
+    "ALERT_OVERHEAT_RSI": 0.0,
 }
 
 
@@ -74,7 +91,7 @@ def update_env_values(env_path: Path, updates: dict[str, str]) -> None:
     使用严格白名单更新 env 文件。
     """
 
-    safe_updates = {key: value.strip() for key, value in updates.items() if key in ALLOWED_ENV_KEYS}
+    safe_updates = validate_env_updates({key: value.strip() for key, value in updates.items() if key in ALLOWED_ENV_KEYS})
     if not safe_updates:
         return
 
@@ -97,3 +114,39 @@ def update_env_values(env_path: Path, updates: dict[str, str]) -> None:
             output.append(f"{key}={value}")
 
     env_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+
+def validate_env_updates(updates: dict[str, str]) -> dict[str, str]:
+    """Validate editable env values before writing them to disk.
+    写入 `.env` 前做基础类型和范围校验，避免无效参数导致服务重启失败。
+    """
+
+    validators: dict[str, Callable[[str], None]] = {}
+    for key in BOOL_KEYS:
+        validators[key] = _validate_bool
+    for key, minimum in INT_MIN.items():
+        validators[key] = lambda value, min_value=minimum: _validate_int_min(value, min_value)
+    for key, minimum in FLOAT_MIN.items():
+        validators[key] = lambda value, min_value=minimum: _validate_float_min(value, min_value)
+    for key, value in updates.items():
+        validator = validators.get(key)
+        if validator:
+            validator(value)
+    return updates
+
+
+def _validate_bool(value: str) -> None:
+    if value.lower() not in {"true", "false"}:
+        raise ValueError("Boolean env values must be true or false")
+
+
+def _validate_int_min(value: str, minimum: int) -> None:
+    parsed = int(value)
+    if parsed < minimum:
+        raise ValueError(f"Integer env value must be >= {minimum}")
+
+
+def _validate_float_min(value: str, minimum: float) -> None:
+    parsed = float(value)
+    if parsed < minimum:
+        raise ValueError(f"Float env value must be >= {minimum}")

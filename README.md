@@ -69,7 +69,7 @@ WEB_ADMIN_TOKEN=
 WEB_HOST=127.0.0.1
 WEB_PORT=8000
 ALERT_RADAR_ENABLED=true
-ALERT_AUTO_PAPER_TRADING_ENABLED=true
+ALERT_AUTO_PAPER_TRADING_ENABLED=false
 ALERT_SCAN_INTERVAL_SECONDS=60
 ALERT_TOP_GAINERS_LIMIT=30
 ALERT_MAX_ALERTS_PER_CYCLE=5
@@ -97,25 +97,6 @@ ALERT_SECOND_LEG_MIN_CLOSE_POSITION=0.55
 ALERT_PULLBACK_VOLUME_CONTRACTION_MAX=1.0
 ALERT_OVERHEAT_RSI=82
 ALERT_FUNDING_RATE_TTL_SECONDS=900
-ALERT_RULE_HOURLY_TREND_ENABLED=true
-ALERT_HOURLY_T1_PRICE_CHANGE_6H=0.08
-ALERT_HOURLY_T1_MA7_MA25_MIN_RATIO=0.995
-ALERT_HOURLY_T1_VOLUME_MULTIPLIER=1.5
-ALERT_HOURLY_T1_OI_CHANGE_6H=0.08
-ALERT_HOURLY_T2_PRICE_CHANGE_12H=0.20
-ALERT_HOURLY_T2_BULLISH_COUNT_12=8
-ALERT_HOURLY_T2_OI_CHANGE_12H=0.15
-ALERT_HOURLY_T2_VOLUME_EXPANSION=1.5
-ALERT_HOURLY_T3_PRICE_CHANGE_12H=0.15
-ALERT_HOURLY_T3_OI_CHANGE_12H=0.10
-ALERT_HOURLY_T3_PULLBACK_MIN=0.04
-ALERT_HOURLY_T3_PULLBACK_MAX=0.10
-ALERT_HOURLY_T3_OI_PULLBACK_MAX=0.10
-ALERT_HOURLY_T4_PRICE_CHANGE_24H=0.50
-ALERT_HOURLY_T4_MA25_DEVIATION=0.20
-ALERT_HOURLY_T4_RSI6=85
-ALERT_HOURLY_T4_RSI24=75
-ALERT_HOURLY_T4_OI_CHANGE_24H=0.40
 ```
 
 不要提交 `.env`。项目已在 `.gitignore` 中排除该文件。
@@ -127,6 +108,10 @@ ALERT_HOURLY_T4_OI_CHANGE_24H=0.40
 `EXCHANGE_REQUEST_RETRIES` 和 `EXCHANGE_RETRY_DELAY_SECONDS` 用于处理 Binance 偶发 K 线/ticker/OI 请求抖动。生产建议保留 `2` 次短重试，避免单次 `klines` 请求失败导致整轮 paper cycle 报错。
 
 `PAPER_ERROR_NOTIFY_CONSECUTIVE_FAILURES` 控制 paper cycle 错误通知阈值。默认连续失败 3 次才推送 Telegram；单次 Binance 请求抖动只写日志，避免误报刷屏。
+
+`ALERT_AUTO_PAPER_TRADING_ENABLED` 默认是 `false`，行情雷达只提醒、不自动建立模拟仓。只有明确要观察雷达信号自动下单表现时才开启；开启后必须确保只有一个 writer 服务负责写 paper orders，避免 `trading-bot` 和 `alert-radar` 重复建仓。雷达规则阈值以 `config/radar_rules.yaml` 为准，旧的 `ALERT_HOURLY_*` 环境变量不再作为真实规则来源。
+
+模拟盘和平仓回测都按已完成 K 线的 `high` / `low` 判断止损止盈；同一根 K 线同时触发止损和止盈时保守按止损处理，避免未完成 K 线或乐观成交顺序造成收益高估。
 
 `TELEGRAM_PROXY` 用于让 Telegram 通知请求强制走代理。本机运行通常使用 `http://127.0.0.1:7890`；Docker/Colima 容器里才需要改成宿主机代理地址，例如 `http://192.168.5.2:7890`。
 
@@ -272,6 +257,8 @@ WEB_ADMIN_TOKEN=一串长随机字符串
 WEB_HOST=127.0.0.1
 WEB_PORT=8000
 ```
+
+通过 Nginx/域名反代 Web Admin 时，必须配置 `WEB_ADMIN_TOKEN`，并让应用仍监听 `127.0.0.1`，由 Nginx 负责公网 80/443、TLS 证书和反向代理。不要把后台服务直接绑定到 `0.0.0.0` 后裸露公网；如果确实配置为非本地监听且 `WEB_ADMIN_TOKEN` 为空，服务会拒绝访问。后台认证只使用安全 cookie/session，不支持 URL query token。
 
 ## Docker Compose
 

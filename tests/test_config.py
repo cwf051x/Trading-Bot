@@ -37,6 +37,14 @@ def test_settings_defaults(monkeypatch) -> None:
         "PAPER_ERROR_NOTIFY_CONSECUTIVE_FAILURES",
         "KLINE_LIMIT",
         "PAPER_LEVERAGE",
+        "PAPER_FEE_RATE",
+        "PAPER_SLIPPAGE_PCT",
+        "PAPER_FUNDING_RATE",
+        "RISK_MAX_TOTAL_EXPOSURE_PCT",
+        "RISK_MAX_OPEN_POSITIONS",
+        "RISK_MAX_SYMBOL_POSITION_PCT",
+        "RISK_PER_TRADE_PCT",
+        "RISK_MAX_CONSECUTIVE_LOSSES",
         "STRATEGY_BREAKOUT_WINDOW",
         "STRATEGY_VOLUME_WINDOW",
         "STRATEGY_VOLUME_MULTIPLIER",
@@ -97,25 +105,6 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_OI_COLD_TTL_SECONDS",
         "ALERT_OI_MAX_REFRESH_PER_LOOP",
         "ALERT_FUNDING_RATE_TTL_SECONDS",
-        "ALERT_RULE_HOURLY_TREND_ENABLED",
-        "ALERT_HOURLY_T1_PRICE_CHANGE_6H",
-        "ALERT_HOURLY_T1_MA7_MA25_MIN_RATIO",
-        "ALERT_HOURLY_T1_VOLUME_MULTIPLIER",
-        "ALERT_HOURLY_T1_OI_CHANGE_6H",
-        "ALERT_HOURLY_T2_PRICE_CHANGE_12H",
-        "ALERT_HOURLY_T2_BULLISH_COUNT_12",
-        "ALERT_HOURLY_T2_OI_CHANGE_12H",
-        "ALERT_HOURLY_T2_VOLUME_EXPANSION",
-        "ALERT_HOURLY_T3_PRICE_CHANGE_12H",
-        "ALERT_HOURLY_T3_OI_CHANGE_12H",
-        "ALERT_HOURLY_T3_PULLBACK_MIN",
-        "ALERT_HOURLY_T3_PULLBACK_MAX",
-        "ALERT_HOURLY_T3_OI_PULLBACK_MAX",
-        "ALERT_HOURLY_T4_PRICE_CHANGE_24H",
-        "ALERT_HOURLY_T4_MA25_DEVIATION",
-        "ALERT_HOURLY_T4_RSI6",
-        "ALERT_HOURLY_T4_RSI24",
-        "ALERT_HOURLY_T4_OI_CHANGE_24H",
     ):
         monkeypatch.delenv(key, raising=False)
     settings = Settings(_env_file=None)
@@ -137,12 +126,20 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.exchange_retry_delay_seconds == 1.0
     assert settings.paper_error_notify_consecutive_failures == 3
     assert settings.paper_leverage == 1.0
+    assert settings.paper_fee_rate == 0.0
+    assert settings.paper_slippage_pct == 0.0
+    assert settings.paper_funding_rate == 0.0
+    assert settings.risk_max_total_exposure_pct == 0.50
+    assert settings.risk_max_open_positions == 5
+    assert settings.risk_max_symbol_position_pct == 0.10
+    assert settings.risk_per_trade_pct == 0.01
+    assert settings.risk_max_consecutive_losses == 3
     assert settings.strategy_breakout_window == 20
     assert settings.strategy_volume_multiplier == 1.5
     assert settings.web_host == "127.0.0.1"
     assert settings.web_port == 8000
     assert settings.alert_radar_enabled is True
-    assert settings.alert_auto_paper_trading_enabled is True
+    assert settings.alert_auto_paper_trading_enabled is False
     assert settings.alert_scan_interval_seconds == 60
     assert settings.alert_top_gainers_limit == 30
     assert settings.alert_max_alerts_per_cycle == 5
@@ -182,11 +179,6 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_oi_cold_ttl_seconds == 600
     assert settings.alert_oi_max_refresh_per_loop == 30
     assert settings.alert_funding_rate_ttl_seconds == 900
-    assert settings.alert_rule_hourly_trend_enabled is True
-    assert settings.alert_hourly_t1_price_change_6h == 0.08
-    assert settings.alert_hourly_t2_price_change_12h == 0.20
-    assert settings.alert_hourly_t3_pullback_min == 0.04
-    assert settings.alert_hourly_t4_ma25_deviation == 0.20
     assert settings.live_trading_allowed is False
 
 

@@ -39,6 +39,55 @@ def test_paper_does_not_duplicate_open_position(tmp_path: Path) -> None:
     assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
 
 
+def test_close_position_is_idempotent_and_does_not_duplicate_trade(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "test", 1)
+    position_id = storage.create_position(order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
+
+    first = storage.close_position(position_id, 104, 8, "take_profit", 2)
+    second = storage.close_position(position_id, 103, 6, "take_profit", 3)
+
+    trades = storage.get_trades()
+    positions = storage.get_positions()
+    assert first is True
+    assert second is False
+    assert len(trades) == 1
+    assert trades[0]["exit_price"] == 104
+    assert positions[0]["closed_at"] == 2
+
+
+def test_create_open_order_position_skips_existing_open_position_atomically(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+
+    first = storage.create_open_order_position(
+        symbol="ETH/USDT:USDT",
+        side="long",
+        quantity=2,
+        entry_price=100,
+        stop_loss=98,
+        take_profit=104,
+        reason="test",
+        timestamp=1,
+    )
+    second = storage.create_open_order_position(
+        symbol="ETH/USDT:USDT",
+        side="long",
+        quantity=3,
+        entry_price=101,
+        stop_loss=99,
+        take_profit=105,
+        reason="duplicate",
+        timestamp=2,
+    )
+
+    assert first is not None
+    assert second is None
+    assert len(storage.get_orders()) == 1
+    assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
+
+
 def test_paper_account_snapshot_tracks_margin_and_pnl(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "paper.sqlite")
     storage.initialize()
@@ -58,6 +107,36 @@ def test_paper_account_snapshot_tracks_margin_and_pnl(tmp_path: Path) -> None:
     assert closed_snapshot.used_margin == 0.0
     assert closed_snapshot.equity == 1_008.0
     assert closed_snapshot.open_position_count == 0
+
+
+def test_paper_high_low_triggers_intrabar_take_profit(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    engine = PaperTradingEngine(storage=storage)
+    signal = Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 104.0, "test", 1)
+
+    engine.process_signal(signal, quantity=2)
+    closed = engine.update_open_positions("ETH/USDT:USDT", price=101.0, timestamp=2, high=104.5, low=100.5)
+
+    trades = storage.get_trades()
+    assert closed == [1]
+    assert trades[0]["exit_reason"] == "take_profit"
+    assert trades[0]["exit_price"] == 104.0
+
+
+def test_paper_high_low_triggers_intrabar_stop_loss(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    engine = PaperTradingEngine(storage=storage)
+    signal = Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 104.0, "test", 1)
+
+    engine.process_signal(signal, quantity=2)
+    closed = engine.update_open_positions("ETH/USDT:USDT", price=101.0, timestamp=2, high=103.0, low=97.5)
+
+    trades = storage.get_trades()
+    assert closed == [1]
+    assert trades[0]["exit_reason"] == "stop_loss"
+    assert trades[0]["exit_price"] == 98.0
 
 
 def test_paper_performance_summary_tracks_closed_and_open_risk(tmp_path: Path) -> None:

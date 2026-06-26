@@ -38,9 +38,31 @@ def main() -> None:
         retry_delay_seconds=settings.exchange_retry_delay_seconds,
     )
     notifier, order_notifier = build_telegram_notifiers(settings)
-    paper = PaperTradingEngine(storage=storage, notifier=order_notifier, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
-    risk_manager = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
-    radar = MarketAlertRadar(MarketScanner(client, settings), storage, notifier, settings, paper=paper, risk_manager=risk_manager)
+    paper = PaperTradingEngine(
+        storage=storage,
+        notifier=order_notifier,
+        initial_equity=settings.account_equity,
+        leverage=settings.paper_leverage,
+        fee_rate=settings.paper_fee_rate,
+        slippage_pct=settings.paper_slippage_pct,
+        funding_rate=settings.paper_funding_rate,
+    )
+    risk_manager = RiskManager(
+        account_equity=settings.account_equity,
+        risk_per_trade_pct=settings.risk_per_trade_pct,
+        max_symbol_position_pct=settings.risk_max_symbol_position_pct,
+        max_total_exposure_pct=settings.risk_max_total_exposure_pct,
+        max_open_positions=settings.risk_max_open_positions,
+        max_consecutive_losses=settings.risk_max_consecutive_losses,
+        btc_drop_threshold_15m=settings.btc_drop_threshold_15m,
+        storage=storage,
+        fee_rate=settings.paper_fee_rate,
+        slippage_pct=settings.paper_slippage_pct,
+        funding_rate=settings.paper_funding_rate,
+    )
+    if settings.alert_auto_paper_trading_enabled:
+        logging.warning("ALERT_AUTO_PAPER_TRADING_ENABLED=true: ensure only one writer service creates paper orders")
+    radar = MarketAlertRadar(MarketScanner(client, settings, storage=storage), storage, notifier, settings, paper=paper, risk_manager=risk_manager)
     alerts = radar.run_once()
     print(f"Alert radar generated {len(alerts)} alerts.")
     for alert in alerts[:10]:

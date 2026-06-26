@@ -21,7 +21,7 @@ class FakeClient:
             ]
         return [
             Kline(timestamp=1, open=100, high=101, low=99, close=100, volume=100),
-            Kline(timestamp=2, open=100, high=105, low=99, close=104, volume=300),
+            Kline(timestamp=2, open=100, high=105, low=101, close=104, volume=300),
         ]
 
 
