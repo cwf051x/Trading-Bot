@@ -1,5 +1,30 @@
 volume_price_oi:
   enabled: true
+  l0:
+    enabled: true
+    min_score_to_store: 60
+    min_score_to_digest: 65
+    hard_filters:
+      price_change_5m: 0.015
+      price_change_15m: 0.025
+      close_position_min: 0.60
+      price_above_ma7: true
+      reject_long_upper_wick: true
+      btc_15m_drop_min: -0.008
+    scoring:
+      base_score: 55
+      volume_ratio_1_5: 8
+      volume_ratio_2_0: 14
+      volume_ratio_3_0: 20
+      oi_change_15m_1: 6
+      oi_change_15m_2: 10
+      oi_change_15m_4: 16
+      both_volume_and_oi_bonus: 10
+      price_above_ma25_bonus: 5
+      top_quote_volume_rank_bonus: 5
+    auto_paper: false
+    send_to_telegram: false
+    digest: true
   l1:
     price_change_15m: 0.03
     volume_ratio: 1.6

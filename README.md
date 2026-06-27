@@ -127,9 +127,11 @@ ALERT_FUNDING_RATE_TTL_SECONDS=900
 
 radar-loop profiling 会输出 `scan_timeframes`、`scan_oi_periods`、`scan_requires_funding`，用于确认本轮只采集启用规则声明的数据需求；同时输出 `diagnostic_*` 字段，例如 `diagnostic_resonance_stats`、`diagnostic_trend_stats`、`diagnostic_pump_has_first_pump` 和各规则关键闸口计数，用来判断低命中是数据覆盖不足还是规则条件过严。
 
+`ALERT_DIGEST_ENABLED=true` 时，radar loop 会按 `ALERT_DIGEST_INTERVAL_SECONDS` 默认每 15 分钟读取最近 `ALERT_DIGEST_LOOKBACK_SECONDS` 内的 `market_alerts`，把同币多次信号聚合成一条 Telegram 热榜。热榜默认取 `ALERT_DIGEST_TOP_N=10`，最低入榜分数 `ALERT_DIGEST_MIN_SCORE=60`；它不影响单条 alert 入库，也不扩大自动模拟下单范围。
+
 `config/radar_rules.yaml` 当前包含：
 
-- `volume_price_oi`：量价 OI 共振拉升雷达，覆盖 L1/L2/L3。
+- `volume_price_oi`：量价 OI 共振拉升雷达，覆盖 L0/L1/L2/L3；L0 是早期观察层，价格涨幅是硬门槛，成交量和 OI 只做质量加分，默认不自动 paper、不单条强推 Telegram，只入库并进入 15 分钟热榜。
 - `hourly_trend`：小时级单边趋势雷达，覆盖 T1/T2/T3/T4。
 - `pump_pullback_second_wave`：爆拉后健康回调 + 二波启动雷达，覆盖 P1/P2/P3/P4。
 

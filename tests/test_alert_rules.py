@@ -264,6 +264,138 @@ def test_volume_price_oi_l1_thresholds_are_loaded_from_rule_config() -> None:
     assert results[0].metadata["resonance_level"] == "L1"
 
 
+def test_volume_price_oi_l0_triggers_with_volume_even_when_oi_is_weak() -> None:
+    metrics = make_metrics(
+        resonance=make_resonance(
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=2.1,
+            volume_continuity=1,
+            oi_change_15m=0.0,
+            oi_change_30m=0.0,
+            ma7=1.16,
+            ma25=1.30,
+        ),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.VOLUME_PRICE_OI_L0
+    assert results[0].metadata["resonance_level"] == "L0"
+    assert results[0].metadata["auto_paper"] is False
+    assert results[0].metadata["send_to_telegram"] is False
+    assert results[0].metadata["digest"] is True
+
+
+def test_volume_price_oi_l0_triggers_with_oi_even_when_volume_is_weak() -> None:
+    metrics = make_metrics(
+        resonance=make_resonance(
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=1.0,
+            volume_continuity=0,
+            oi_change_15m=0.025,
+            oi_change_30m=0.02,
+            ma7=1.16,
+            ma25=1.30,
+        ),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results[0].alert_type == AlertType.VOLUME_PRICE_OI_L0
+    assert results[0].score >= 60
+
+
+def test_volume_price_oi_l0_scores_stronger_when_volume_and_oi_both_expand() -> None:
+    weak_volume = make_metrics(
+        resonance=make_resonance(
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=2.0,
+            volume_continuity=1,
+            oi_change_15m=0.0,
+            oi_change_30m=0.0,
+            ma7=1.16,
+            ma25=1.30,
+        ),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+    strong_resonance = make_metrics(
+        resonance=make_resonance(
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=2.0,
+            volume_continuity=1,
+            oi_change_15m=0.025,
+            oi_change_30m=0.02,
+            ma7=1.16,
+            ma25=1.30,
+        ),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+
+    weak_score = AlertRuleEngine(make_settings()).evaluate(weak_volume)[0].score
+    strong_score = AlertRuleEngine(make_settings()).evaluate(strong_resonance)[0].score
+
+    assert strong_score > weak_score
+
+
+def test_volume_price_oi_l0_requires_price_move() -> None:
+    metrics = make_metrics(
+        resonance=make_resonance(
+            price_change_15m=0.01,
+            price_change_30m=0.02,
+            price_change_60m=0.03,
+            volume_ratio=3.0,
+            oi_change_15m=0.05,
+            ma7=1.16,
+            ma25=1.10,
+        ),
+        stats_5m=TimeframeStats(change=0.005, close_position=0.75),
+    )
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results == []
+
+
+def test_volume_price_oi_l0_rejects_long_upper_wick_and_btc_dump() -> None:
+    upper_wick = make_metrics(
+        resonance=make_resonance(price_change_15m=0.028, price_change_30m=0.03, price_change_60m=0.04, volume_ratio=2.5, oi_change_15m=0.03, ma7=1.16, long_upper_wick=True),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+    btc_dump = make_metrics(
+        btc_15m_change=-0.012,
+        resonance=make_resonance(price_change_15m=0.028, price_change_30m=0.03, price_change_60m=0.04, volume_ratio=2.5, oi_change_15m=0.03, ma7=1.16),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+
+    assert AlertRuleEngine(make_settings()).evaluate(upper_wick) == []
+    assert AlertRuleEngine(make_settings()).evaluate(btc_dump) == []
+
+
+def test_volume_price_oi_l2_and_l3_keep_priority_over_l0() -> None:
+    l2_metrics = make_metrics(resonance=make_resonance())
+    l3_metrics = make_metrics(resonance=make_resonance(price_change_60m=0.22, rsi6=88, ma25_deviation=0.12, oi_change_60m=0.25, long_upper_wick=True))
+
+    l2 = AlertRuleEngine(make_settings()).evaluate(l2_metrics)[0]
+    l3 = AlertRuleEngine(make_settings()).evaluate(l3_metrics)[0]
+
+    assert l2.alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE
+    assert l2.metadata["resonance_level"] == "L2"
+    assert l2.metadata["auto_paper"] is True
+    assert l3.alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE
+    assert l3.metadata["resonance_level"] == "L3"
+    assert l3.metadata["auto_paper"] is False
+
+
 def test_hourly_trend_t3_pullback_has_priority() -> None:
     metrics = make_metrics(trend=make_hourly_trend())
 

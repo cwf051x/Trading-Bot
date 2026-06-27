@@ -10,6 +10,7 @@ from typing import Any
 
 from app.alerts.alert_rules import AlertRuleEngine
 from app.alerts.alert_state import AlertStateManager
+from app.alerts.digest import AlertDigestManager
 from app.alerts.profiling import CycleProfiler
 from app.alerts.scanner import MarketScanner
 from app.alerts.scoring import level_from_score
@@ -33,6 +34,7 @@ ALERT_NOTIFICATION_PRIORITY = {
     AlertType.PUMP_PULLBACK_P2: 93,
     AlertType.HOURLY_TREND_T1: 75,
     AlertType.PUMP_PULLBACK_P1: 65,
+    AlertType.VOLUME_PRICE_OI_L0: 66,
     AlertType.VOLUME_PRICE_OI_RESONANCE: 98,
     AlertType.PULLBACK_SECOND_LEG: 95,
     AlertType.MULTI_TIMEFRAME_BREAKOUT: 90,
@@ -76,6 +78,7 @@ class MarketAlertRadar:
         self.risk_manager = risk_manager
         self.rules = AlertRuleEngine(settings)
         self.state = AlertStateManager(storage, settings)
+        self.digest = AlertDigestManager(storage, notifier, settings)
         self._last_error_sent_at = 0.0
 
     def run_once(self) -> list[AlertSignal]:
@@ -111,7 +114,8 @@ class MarketAlertRadar:
                         alert = self._build_alert(metrics, result.alert_type, result.score, result.reasons, result.suggested_action, result.invalidation_price, result.target_1, result.target_2, result.metadata)
                         if alert.level == AlertLevel.IGNORE:
                             continue
-                        if alert.score < self.settings.alert_min_score_to_store:
+                        min_score_to_store = int(alert.raw.get("metadata", {}).get("min_score_to_store", self.settings.alert_min_score_to_store))
+                        if alert.score < min_score_to_store:
                             logger.info("Alert %s %s ignored because score %s is below store threshold", alert.symbol, alert.alert_type.value, alert.score)
                             continue
                         symbol_alerts.append(alert)
@@ -139,6 +143,11 @@ class MarketAlertRadar:
                 elif not should_send:
                     logger.info("Alert %s %s stored without Telegram because level config or cooldown blocked it", alert.symbol, alert.alert_type.value)
                 alerts.append(persisted_alert)
+            with profiler.measure("digest"):
+                try:
+                    self.digest.maybe_send()
+                except Exception as exc:
+                    logger.warning("Alert digest failed without blocking radar loop: %s", exc)
             return sorted(alerts, key=lambda item: item.score, reverse=True)
         except Exception as exc:
             if "metrics_rows" not in locals():
@@ -253,7 +262,7 @@ class MarketAlertRadar:
         将提醒类型映射到独立规则家族，用于同币多雷达并行观察。
         """
 
-        if alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE:
+        if alert_type in {AlertType.VOLUME_PRICE_OI_L0, AlertType.VOLUME_PRICE_OI_RESONANCE}:
             return "volume_price_oi"
         if alert_type in {AlertType.HOURLY_TREND_T1, AlertType.HOURLY_TREND_T2, AlertType.HOURLY_TREND_T3, AlertType.HOURLY_TREND_T4}:
             return "hourly_trend"

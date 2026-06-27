@@ -599,6 +599,23 @@ class SQLiteStorage:
                 rows = connection.execute("SELECT * FROM market_alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
+    def get_market_alerts_since(self, since_ms: int, limit: int = 500) -> list[dict[str, Any]]:
+        """Return alerts created after a timestamp for digest aggregation.
+        返回指定时间之后的提醒，供热榜汇总聚合使用。
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM market_alerts
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC, id ASC
+                LIMIT ?
+                """,
+                (since_ms, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_last_market_alert(self, symbol: str, alert_type: str, sent_only: bool = False) -> dict[str, Any] | None:
         """Return the latest alert for one symbol and alert type.
         返回某交易对某提醒类型的最近一条记录。
@@ -683,3 +700,40 @@ class SQLiteStorage:
         except json.JSONDecodeError:
             payload["metadata_json"] = {}
         return payload
+
+    def claim_alert_digest(self, timestamp_ms: int, interval_ms: int) -> bool:
+        """Atomically claim the next digest send slot.
+        原子占用下一次热榜发送窗口，避免多进程同时发送 digest。
+        """
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT metadata_json FROM alert_states WHERE symbol = ?", ("__digest__",)).fetchone()
+            if row is not None:
+                try:
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                except json.JSONDecodeError:
+                    metadata = {}
+                last_digest_at = int(metadata.get("last_digest_at") or 0)
+                if last_digest_at and timestamp_ms - last_digest_at < interval_ms:
+                    connection.rollback()
+                    return False
+            metadata_json = json.dumps({"last_digest_at": timestamp_ms, "sent": False, "claimed": True}, ensure_ascii=False)
+            connection.execute(
+                """
+                INSERT INTO alert_states(
+                    symbol, state, last_alert_type, last_alert_score, last_alert_price, last_alert_at,
+                    watch_high, watch_low, support_price, invalidation_price, metadata_json
+                )
+                VALUES ('__digest__', 'digest_claimed', 'ALERT_DIGEST', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    state = excluded.state,
+                    last_alert_type = excluded.last_alert_type,
+                    last_alert_score = excluded.last_alert_score,
+                    last_alert_price = excluded.last_alert_price,
+                    last_alert_at = excluded.last_alert_at,
+                    metadata_json = excluded.metadata_json
+                """,
+                (timestamp_ms, metadata_json),
+            )
+            return True
