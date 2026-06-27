@@ -141,6 +141,9 @@ class VolumePriceOIRule(AlertRule):
                 (0.01, int(scoring.get("oi_change_15m_1", 6))),
             ],
         )
+        # MA 和涨幅榜只能辅助加分，L0 至少需要成交量或 OI 任一质量确认。
+        if volume_points <= 0 and oi_points <= 0:
+            return None
         score += volume_points + oi_points
         if volume_points > 0 and oi_points > 0:
             score += int(scoring.get("both_volume_and_oi_bonus", 10))

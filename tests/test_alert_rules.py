@@ -386,6 +386,29 @@ def test_volume_price_oi_l0_requires_price_move() -> None:
     assert results == []
 
 
+def test_volume_price_oi_l0_requires_volume_or_oi_quality_confirmation() -> None:
+    metrics = make_metrics(
+        rank_24h=3,
+        resonance=make_resonance(
+            price_change_5m=0.018,
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=1.2,
+            volume_continuity=0,
+            oi_change_15m=0.005,
+            oi_change_30m=0.0,
+            ma7=1.16,
+            ma25=1.10,
+        ),
+        stats_5m=TimeframeStats(change=0.016, close_position=0.72),
+    )
+
+    results = AlertRuleEngine(make_settings()).evaluate(metrics)
+
+    assert results == []
+
+
 def test_volume_price_oi_l0_rejects_long_upper_wick_and_btc_dump() -> None:
     upper_wick = make_metrics(
         resonance=make_resonance(price_change_15m=0.028, price_change_30m=0.03, price_change_60m=0.04, volume_ratio=2.5, oi_change_15m=0.03, ma7=1.16, long_upper_wick=True),
