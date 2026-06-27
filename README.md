@@ -184,7 +184,7 @@ python scripts/run_alert_radar_once.py
 ./scripts/start_radar_loop.sh
 ```
 
-该脚本会把终端输出同时追加到 `logs/alert_radar.log`，Web Admin 的 Logs 页面才能持续看到本地 radar loop 新日志。调试时也可以直接运行 `python scripts/run_alert_radar_loop.py`，但裸命令只输出到当前终端。
+该脚本会把终端输出同时追加到 `logs/alert_radar.log`，Web Admin 的 Logs 页面才能持续看到本地 radar loop 新日志。调试时也可以直接运行 `python scripts/run_alert_radar_loop.py`，但裸命令只输出到当前终端，不会自动写入 Web Admin Logs 页面读取的 `logs/*.log`。
 
 模拟盘循环：
 
@@ -193,6 +193,8 @@ python scripts/run_alert_radar_once.py
 ```
 
 该脚本会把终端输出同时追加到 `logs/trading_bot.log`。
+
+如果 Docker 服务、screen 会话或其他同类 loop 已经在运行，不要再手动启动本地脚本，避免重复 writer 同时写入模拟盘或日志文件。
 
 本地检查 Telegram 格式，不访问 Binance、不下单：
 

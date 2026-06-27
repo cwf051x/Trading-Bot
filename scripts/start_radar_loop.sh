@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
+LOCK_FILE="$ROOT_DIR/logs/alert_radar.lock"
 
 cd "$ROOT_DIR"
 
@@ -13,7 +14,7 @@ fi
 
 mkdir -p "$ROOT_DIR/logs"
 
-existing_pids="$(pgrep -f "scripts/run_alert_radar_loop.py" 2>/dev/null || true)"
+existing_pids="$(pgrep -f "python.*scripts/run_alert_radar_loop.py|run_alert_radar_loop.py" 2>/dev/null || true)"
 if [[ -n "$existing_pids" ]]; then
   echo "run_alert_radar_loop.py already appears to be running:" >&2
   for pid in $existing_pids; do
@@ -24,5 +25,27 @@ if [[ -n "$existing_pids" ]]; then
   exit 1
 fi
 
-echo "Starting alert radar loop; appending logs to logs/alert_radar.log"
-exec "$PYTHON_BIN" scripts/run_alert_radar_loop.py 2>&1 | tee -a "$ROOT_DIR/logs/alert_radar.log"
+run_loop() {
+  echo "Starting alert radar loop; appending logs to logs/alert_radar.log"
+  PYTHONUNBUFFERED=1 "$PYTHON_BIN" scripts/run_alert_radar_loop.py 2>&1 | tee -a "$ROOT_DIR/logs/alert_radar.log"
+}
+
+if command -v flock >/dev/null 2>&1; then
+  (
+    if ! flock -n 9; then
+      echo "alert radar loop lock is already held: $LOCK_FILE" >&2
+      echo "Stop the existing radar loop before starting another one." >&2
+      exit 1
+    fi
+    run_loop
+  ) 9>"$LOCK_FILE"
+else
+  LOCK_DIR="$LOCK_FILE.dir"
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "alert radar loop lock is already held: $LOCK_FILE" >&2
+    echo "Stop the existing radar loop before starting another one." >&2
+    exit 1
+  fi
+  trap 'rmdir "$LOCK_DIR"' EXIT
+  run_loop
+fi
