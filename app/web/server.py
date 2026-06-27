@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import csv
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from math import ceil
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -42,6 +43,8 @@ from scripts.replay_radar_signals import (
 BASE_DIR = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_PROTECTED_PATHS = {"/settings", "/backtests/run", "/replay"}
 
 
 def format_datetime_ms(timestamp_ms: int | float | None) -> str:
@@ -301,6 +304,25 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Trading Bot Admin")
 
+    @app.middleware("http")
+    async def csrf_middleware(request: Request, call_next: Any) -> Response:
+        """Validate CSRF token for state-changing admin forms.
+        对会修改状态的后台表单校验 CSRF，避免反代暴露后被跨站提交。
+        """
+
+        if request.method == "POST" and request.url.path in CSRF_PROTECTED_PATHS:
+            body = await request.body()
+            request._body = body  # type: ignore[attr-defined]
+            form_token = parse_qs(body.decode("utf-8", errors="ignore")).get("csrf_token", [""])[0]
+            cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+            if not form_token or not cookie_token or not secrets.compare_digest(form_token, cookie_token):
+                return Response("CSRF token invalid", status_code=403)
+        response = await call_next(request)
+        csrf_token = getattr(request.state, "csrf_token", "")
+        if csrf_token:
+            response.set_cookie(CSRF_COOKIE_NAME, csrf_token, httponly=True, samesite="lax")
+        return response
+
     @app.get("/health")
     def health() -> dict[str, str]:
         """Return a lightweight health check response.
@@ -386,9 +408,10 @@ def create_app() -> FastAPI:
         将安全的运行和策略参数保存到 `.env`。
         """
 
-        update_env_values(
-            BASE_DIR / ".env",
-            {
+        try:
+            update_env_values(
+                BASE_DIR / ".env",
+                {
                 "WATCH_SYMBOLS": watch_symbols,
                 "DEFAULT_SYMBOL": default_symbol,
                 "DEFAULT_TIMEFRAME": default_timeframe,
@@ -427,8 +450,10 @@ def create_app() -> FastAPI:
                 "ALERT_SECOND_LEG_MIN_CLOSE_POSITION": alert_second_leg_min_close_position,
                 "ALERT_PULLBACK_VOLUME_CONTRACTION_MAX": alert_pullback_volume_contraction_max,
                 "ALERT_OVERHEAT_RSI": alert_overheat_rsi,
-            },
-        )
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse("/settings?message=Settings%20saved.%20Restart%20paper%20service%20to%20apply.", status_code=303)
 
     @app.get("/backtests")
@@ -611,11 +636,21 @@ def require_admin(request: Request) -> None:
     """
 
     settings = Settings()
+    if not settings.web_admin_token and not is_local_bind(settings.web_host):
+        raise HTTPException(status_code=500, detail="WEB_ADMIN_TOKEN is required when WEB_HOST is not local")
     if not settings.web_admin_token:
         return
-    token = request.cookies.get("admin_token") or request.query_params.get("token", "")
+    token = request.cookies.get("admin_token", "")
     if token != settings.web_admin_token:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
+
+
+def is_local_bind(host: str) -> bool:
+    """Return whether the admin server is bound only to local interfaces.
+    判断 Web 后台是否只监听本地地址；非本地监听必须配置后台 token。
+    """
+
+    return host.strip().lower() in {"", "127.0.0.1", "localhost", "::1"}
 
 
 def build_storage(settings: Settings) -> SQLiteStorage:
@@ -638,7 +673,9 @@ def base_context(request: Request, settings: Settings, **extra: Any) -> dict[str
         "settings": settings,
         "symbols": ", ".join(settings.active_symbols),
         "auth_enabled": bool(settings.web_admin_token),
+        "csrf_token": request.cookies.get(CSRF_COOKIE_NAME) or secrets.token_urlsafe(32),
     }
+    request.state.csrf_token = context["csrf_token"]
     context.update(extra)
     return context
 

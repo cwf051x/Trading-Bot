@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable, Iterable, TypeVar
 
 from app.alerts.rule_config import load_radar_rule_config
+from app.data.closed_candles import closed_klines, timeframe_seconds
 from app.exchange.binance import Kline
 
 logger = logging.getLogger(__name__)
@@ -298,15 +299,7 @@ class MarketDataService:
         在计算指标前丢弃 Binance 返回的未收盘最新 K 线。
         """
 
-        if not klines:
-            return []
-        timeframe_ms = self.get_timeframe_seconds(timeframe) * 1000
-        if timeframe_ms <= 0:
-            return klines
-        now_ms = int(time.time() * 1000)
-        if klines[-1].timestamp + timeframe_ms > now_ms:
-            return klines[:-1]
-        return klines
+        return closed_klines(klines, timeframe)
 
     def _merge_klines(self, cached: list[Kline], fresh: list[Kline], max_length: int) -> list[Kline]:
         """Merge K-lines by Binance candle open timestamp.
@@ -359,12 +352,4 @@ class MarketDataService:
         将 Binance 周期字符串转换为秒数，用于检测缓存时间断层。
         """
 
-        unit = timeframe[-1]
-        value = int(timeframe[:-1])
-        if unit == "m":
-            return value * 60
-        if unit == "h":
-            return value * 60 * 60
-        if unit == "d":
-            return value * 24 * 60 * 60
-        return 0
+        return timeframe_seconds(timeframe)

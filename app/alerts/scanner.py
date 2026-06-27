@@ -61,6 +61,7 @@ class MarketScanner:
         self.funding_cache = self.market_data.funding_cache
         self.ticker_cache: dict[str, dict[str, Any]] = {}
         self.hot_symbols: dict[str, float] = {}
+        self.last_btc_klines: list[Kline] = []
         self._cache_stats = self.market_data.cache_stats
         if not hasattr(self.settings, "radar_rule_config"):
             object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
@@ -131,6 +132,8 @@ class MarketScanner:
             self._update_ticker_cache(eligible, now=now)
         self._oi_failures = []
         btc_klines = self._get_klines_safe("BTC/USDT:USDT", "15m", 2)
+        # _get_klines_safe already filters out the still-forming candle.
+        self.last_btc_klines = list(btc_klines)
         btc_15m_change = pct_change(btc_klines[0].open, btc_klines[-1].close) if len(btc_klines) >= 2 else 0.0
         fast_pairs = self._run_limited((ticker["symbol"] for ticker in candidate_rows), lambda symbol: self._collect_fast_klines(symbol, scan_plan))
         fast_klines_by_symbol = {symbol: klines for symbol, klines in fast_pairs}

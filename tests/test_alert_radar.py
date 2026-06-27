@@ -7,6 +7,7 @@ from app.alerts.alert_state import AlertStateManager
 from app.alerts.signal_models import AlertLevel, AlertRuleResult, AlertSignal, AlertType, MarketMetrics, TimeframeStats
 from app.config import Settings
 from app.execution.paper import PaperTradingEngine
+from app.exchange.binance import Kline
 from app.risk.manager import RiskManager
 from app.storage.sqlite import SQLiteStorage
 
@@ -64,6 +65,7 @@ def make_metrics(symbol: str) -> MarketMetrics:
 class FakeScanner:
     def __init__(self, symbols: list[str]) -> None:
         self.symbols = symbols
+        self.last_btc_klines: list[Kline] = []
 
     def scan(self) -> list[MarketMetrics]:
         return [make_metrics(symbol) for symbol in self.symbols]
@@ -165,6 +167,48 @@ def test_radar_does_not_create_paper_order_for_risk_only_trend_alert(tmp_path) -
     risk = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
     radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings, paper=paper, risk_manager=risk)
     radar.rules = TrendRiskRules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert storage.get_orders() == []
+
+
+def test_radar_auto_paper_passes_current_alert_price_to_risk(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+
+    class RecordingRiskManager:
+        def __init__(self) -> None:
+            self.market_context = None
+
+        def evaluate(self, signal, market_context=None):
+            self.market_context = market_context
+            return type("Decision", (), {"allowed": False, "reason": "recorded", "position_size": 0.0})()
+
+    risk = RecordingRiskManager()
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings, paper=paper, risk_manager=risk)
+    radar.rules = EntryRules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert risk.market_context == {"current_prices": {"COIN/USDT:USDT": 1.0}, "btc_klines": []}
+
+
+def test_radar_auto_paper_blocks_long_when_btc_closed_candles_dump(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ACCOUNT_EQUITY=10_000, BTC_DROP_THRESHOLD_15M=0.03)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+    risk = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
+    scanner = FakeScanner(["COIN/USDT:USDT"])
+    scanner.last_btc_klines = [
+        Kline(timestamp=1, open=100, high=101, low=99, close=100, volume=1),
+        Kline(timestamp=2, open=96, high=97, low=94, close=96, volume=1),
+    ]
+    radar = MarketAlertRadar(scanner, storage, FakeNotifier(), settings, paper=paper, risk_manager=risk)
+    radar.rules = EntryRules()
 
     alerts = radar.run_once()
 

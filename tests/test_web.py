@@ -3,6 +3,7 @@
 """
 
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 
@@ -34,6 +35,41 @@ def test_admin_token_blocks_dashboard(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+def test_admin_token_required_for_non_local_bind(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    monkeypatch.setenv("WEB_HOST", "0.0.0.0")
+
+    client = TestClient(create_app())
+    response = client.get("/")
+
+    assert response.status_code == 500
+    assert "WEB_ADMIN_TOKEN is required" in response.text
+
+
+def test_query_token_does_not_authenticate_admin(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "secret")
+    client = TestClient(create_app(), follow_redirects=False)
+
+    response = client.get("/?token=secret")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_post_settings_requires_csrf_token(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "web.sqlite"))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "secret")
+    client = TestClient(create_app(), follow_redirects=False)
+    client.post("/login", data={"token": "secret"})
+
+    response = client.post("/settings", data={})
+
+    assert response.status_code == 403
+    assert "CSRF" in response.text
 
 
 def test_alerts_page_renders(monkeypatch, tmp_path: Path) -> None:
@@ -370,8 +406,10 @@ def test_radar_replay_post_shows_summary_and_detail(monkeypatch, tmp_path: Path)
 
     monkeypatch.setattr(web_server, "run_radar_replay", fake_run)
     client = TestClient(create_app())
+    form_page = client.get("/replay")
+    csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', form_page.text).group(1)
 
-    response = client.post("/replay", data={"symbol": "ETH/USDT:USDT", "days": "7", "warmup_bars": "120", "cooldown_bars": "6"})
+    response = client.post("/replay", data={"csrf_token": csrf_token, "symbol": "ETH/USDT:USDT", "days": "7", "warmup_bars": "120", "cooldown_bars": "6"})
 
     assert response.status_code == 200
     assert "Replay generated 1 signals" in response.text
@@ -441,3 +479,17 @@ def test_env_editor_updates_only_allowed_keys(tmp_path: Path) -> None:
     content = env_path.read_text(encoding="utf-8")
     assert "WATCH_SYMBOLS=ETH/USDT:USDT" in content
     assert "ENABLE_LIVE_TRADING=false" in content
+
+
+def test_env_editor_rejects_invalid_numeric_values(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("POLL_INTERVAL_SECONDS=60\n", encoding="utf-8")
+
+    try:
+        update_env_values(env_path, {"POLL_INTERVAL_SECONDS": "0"})
+    except ValueError as exc:
+        assert "Integer env value" in str(exc)
+    else:
+        raise AssertionError("invalid env value should be rejected")
+
+    assert env_path.read_text(encoding="utf-8") == "POLL_INTERVAL_SECONDS=60\n"

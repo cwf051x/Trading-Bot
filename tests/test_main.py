@@ -21,12 +21,16 @@ class FakeClient:
             ]
         return [
             Kline(timestamp=1, open=100, high=101, low=99, close=100, volume=100),
-            Kline(timestamp=2, open=100, high=105, low=99, close=104, volume=300),
+            Kline(timestamp=2, open=100, high=105, low=101, close=104, volume=300),
         ]
 
 
 class FakeStrategy:
+    def __init__(self):
+        self.last_market_data = None
+
     def generate_signal(self, market_data):
+        self.last_market_data = market_data
         return Signal(market_data["symbol"], "long", 0.8, 104.0, 100.0, 112.0, "test signal", 2)
 
 
@@ -139,6 +143,39 @@ def test_run_paper_cycle_handles_multiple_symbols(tmp_path):
     assert len(storage.get_open_positions("SOL/USDT:USDT")) == 1
     assert len(notifier.signals) == 2
     assert len(notifier.orders) == 2
+
+
+def test_run_paper_cycle_uses_only_closed_candles_for_mark_to_market_and_signal(monkeypatch, tmp_path):
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    notifier = FakeNotifier()
+    from app.execution.paper import PaperTradingEngine
+
+    paper = PaperTradingEngine(storage=storage, notifier=notifier)
+    paper.process_signal(Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 104.0, "existing", 1), quantity=1)
+    risk = RiskManager(account_equity=10_000)
+    strategy = FakeStrategy()
+
+    class FormingCandleClient:
+        def get_klines(self, symbol: str, timeframe: str, limit: int, since=None):
+            if symbol.startswith("BTC"):
+                return [
+                    Kline(timestamp=1_000_000, open=100, high=100, low=100, close=100, volume=1),
+                    Kline(timestamp=1_500_000, open=100, high=100, low=100, close=100, volume=1),
+                ]
+            return [
+                Kline(timestamp=1_000_000, open=100, high=101, low=99, close=100, volume=100),
+                Kline(timestamp=1_500_000, open=100, high=130, low=70, close=120, volume=300),
+            ]
+
+    monkeypatch.setattr(main_module.time, "time", lambda: 2_000_000 / 1000)
+
+    run_paper_cycle(FormingCandleClient(), paper, strategy, risk, notifier, FakeSettings())
+
+    assert storage.get_open_positions("ETH/USDT:USDT") != []
+    assert storage.get_trades() == []
+    assert strategy.last_market_data is not None
+    assert [kline.timestamp for kline in strategy.last_market_data["klines"]] == [1_000_000]
 
 
 def test_paper_mode_sends_cycle_errors_to_order_notifier(monkeypatch, tmp_path):

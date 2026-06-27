@@ -24,8 +24,12 @@ class SQLiteStorage:
         """
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path, timeout=10.0)
         connection.row_factory = sqlite3.Row
+        # WAL + busy_timeout 降低 trading-bot / admin-web / radar 并发访问时的锁冲突概率。
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def initialize(self) -> None:
@@ -89,6 +93,15 @@ class SQLiteStorage:
                 )
                 """
             )
+            self._raise_for_duplicate_open_positions(connection)
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_one_open_symbol_side
+                ON positions(symbol, side)
+                WHERE status = 'open'
+                """
+            )
+
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS market_alerts (
@@ -133,6 +146,29 @@ class SQLiteStorage:
                 )
                 """
             )
+
+    def _raise_for_duplicate_open_positions(self, connection: sqlite3.Connection) -> None:
+        """Fail clearly when old data would violate the open-position unique index.
+        老库如果已有同 symbol/side 多个 open 仓位，先给出清晰诊断，不静默删用户数据。
+        """
+
+        rows = connection.execute(
+            """
+            SELECT symbol, side, COUNT(*) AS count
+            FROM positions
+            WHERE status = 'open'
+            GROUP BY symbol, side
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC, symbol, side
+            """
+        ).fetchall()
+        if not rows:
+            return
+        details = ", ".join(f"{row['symbol']} {row['side']} count={row['count']}" for row in rows)
+        raise ValueError(
+            "duplicate open positions detected before creating idx_positions_one_open_symbol_side: "
+            f"{details}. Close or mark duplicate rows manually before starting the service."
+        )
 
     def create_order(
         self,
@@ -184,6 +220,48 @@ class SQLiteStorage:
                 (order_id, symbol, side, quantity, entry_price, stop_loss, take_profit, opened_at),
             )
             return int(cursor.lastrowid)
+
+    def create_open_order_position(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float | None,
+        reason: str,
+        timestamp: int,
+    ) -> dict[str, int] | None:
+        """Atomically create an open order and its position when no duplicate exists.
+        在同一个写事务里检查并创建订单/持仓，避免先查后插导致重复开仓。
+        """
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT 1 FROM positions WHERE status = 'open' AND symbol = ? AND side = ? LIMIT 1",
+                (symbol, side),
+            ).fetchone()
+            if existing is not None:
+                connection.rollback()
+                return None
+            order_cursor = connection.execute(
+                """
+                INSERT INTO orders(symbol, side, quantity, entry_price, stop_loss, take_profit, status, reason, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                """,
+                (symbol, side, quantity, entry_price, stop_loss, take_profit, reason, timestamp),
+            )
+            order_id = int(order_cursor.lastrowid)
+            position_cursor = connection.execute(
+                """
+                INSERT INTO positions(order_id, symbol, side, quantity, entry_price, stop_loss, take_profit, status, opened_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                """,
+                (order_id, symbol, side, quantity, entry_price, stop_loss, take_profit, timestamp),
+            )
+            connection.commit()
+            return {"order_id": order_id, "position_id": int(position_cursor.lastrowid)}
 
     def get_open_positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """Return open positions.
@@ -332,20 +410,24 @@ class SQLiteStorage:
                 row = connection.execute("SELECT 1 FROM positions WHERE status = 'open' AND symbol = ? LIMIT 1", (symbol,)).fetchone()
         return row is not None
 
-    def close_position(self, position_id: int, exit_price: float, pnl: float, exit_reason: str, timestamp: int) -> None:
+    def close_position(self, position_id: int, exit_price: float, pnl: float, exit_reason: str, timestamp: int) -> bool:
         """Mark an open position as closed.
         将未平仓持仓标记为已平仓，并写入交易记录。
         """
 
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT * FROM positions WHERE id = ?", (position_id,)).fetchone()
             if row is None:
                 raise ValueError(f"Position {position_id} does not exist")
+            if row["status"] != "open":
+                connection.rollback()
+                return False
             connection.execute(
                 """
                 UPDATE positions
                 SET status = 'closed', exit_price = ?, pnl = ?, exit_reason = ?, closed_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'open'
                 """,
                 (exit_price, pnl, exit_reason, timestamp, position_id),
             )
@@ -367,6 +449,8 @@ class SQLiteStorage:
                     timestamp,
                 ),
             )
+            connection.commit()
+            return True
 
     def get_trades(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return closed trade records.
@@ -388,6 +472,15 @@ class SQLiteStorage:
         with self.connect() as connection:
             row = connection.execute("SELECT COALESCE(SUM(pnl), 0) AS realized_pnl FROM trades").fetchone()
         return float(row["realized_pnl"])
+
+    def get_recent_closed_trades(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return latest closed trades for runtime risk checks.
+        返回最近平仓交易，用于运行时连续亏损风控。
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM trades ORDER BY closed_at DESC, id DESC LIMIT ?", (max(1, int(limit)),)).fetchall()
+        return [dict(row) for row in rows]
 
     def get_paper_performance_summary(self, leverage: float = 1.0) -> dict[str, float | int]:
         """Return paper trading performance and open-risk aggregates.

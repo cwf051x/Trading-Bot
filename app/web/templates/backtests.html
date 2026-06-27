@@ -9,6 +9,7 @@
 </div>
 
 <form method="post" action="/backtests/run" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="toolbar">
     <label style="min-width: min(520px, 100%);">
       CSV File
