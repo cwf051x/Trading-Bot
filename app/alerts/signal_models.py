@@ -71,6 +71,7 @@ class ResonanceStats:
     量价 OI 共振使用的派生字段。
     """
 
+    price_change_5m: float = 0.0
     price_change_15m: float = 0.0
     price_change_30m: float = 0.0
     price_change_60m: float = 0.0

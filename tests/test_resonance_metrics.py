@@ -31,6 +31,7 @@ def test_build_resonance_stats_derives_price_volume_oi_and_ma_fields() -> None:
     stats = build_resonance_stats(make_klines(), make_oi_history())
 
     assert stats is not None
+    assert stats.price_change_5m > 0
     assert stats.price_change_15m > 0.03
     assert stats.price_change_30m > 0.06
     assert stats.price_change_60m > 0.10
@@ -42,6 +43,17 @@ def test_build_resonance_stats_derives_price_volume_oi_and_ma_fields() -> None:
     assert stats.ma7 > stats.ma25 > stats.ma99
     assert stats.bullish_5m_count_6 == 6
     assert stats.ma25_deviation > 0
+
+
+def test_build_resonance_stats_price_change_5m_uses_latest_completed_interval() -> None:
+    klines = make_klines()
+    previous = klines[-2].close
+    current = klines[-1].close
+
+    stats = build_resonance_stats(klines, make_oi_history())
+
+    assert stats is not None
+    assert stats.price_change_5m == (current - previous) / previous
 
 
 def make_hourly_klines() -> list[Kline]:

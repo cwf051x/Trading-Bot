@@ -287,10 +287,12 @@ class MarketAlertRadar:
         """
 
         volume_ratio = max(metrics.stats_3m.volume_ratio, metrics.stats_5m.volume_ratio, metrics.stats_15m.volume_ratio)
+        price_change_5m = metrics.stats_5m.change
         price_change_15m = metrics.stats_15m.change
         price_change_1h = metrics.stats_1h.change
         if metrics.resonance is not None:
             volume_ratio = metrics.resonance.volume_ratio
+            price_change_5m = metrics.resonance.price_change_5m
             price_change_15m = metrics.resonance.price_change_15m
             price_change_1h = metrics.resonance.price_change_60m
         if alert_type in {AlertType.HOURLY_TREND_T1, AlertType.HOURLY_TREND_T2, AlertType.HOURLY_TREND_T3, AlertType.HOURLY_TREND_T4} and metrics.trend is not None:
@@ -308,7 +310,7 @@ class MarketAlertRadar:
             score=score,
             price=metrics.price,
             price_change_3m=metrics.stats_3m.change,
-            price_change_5m=metrics.stats_5m.change,
+            price_change_5m=price_change_5m,
             price_change_15m=price_change_15m,
             price_change_1h=price_change_1h,
             price_change_24h=metrics.price_change_24h,

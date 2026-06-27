@@ -7,7 +7,7 @@ from app.alerts.rule_config import DEFAULT_RADAR_RULE_CONFIG
 from app.alerts.signal_models import AlertType, HourlyTrendStats, MarketMetrics, PumpPullbackStats, ResonanceStats, TimeframeStats
 from app.config import Settings
 from app.data.market_snapshot import build_market_metrics
-from app.exchange.binance import Kline
+from app.exchange.binance import Kline, OpenInterestPoint
 
 
 def make_settings() -> Settings:
@@ -43,6 +43,7 @@ def make_metrics(**overrides) -> MarketMetrics:
 
 def make_resonance(**overrides) -> ResonanceStats:
     stats = ResonanceStats(
+        price_change_5m=0.025,
         price_change_15m=0.04,
         price_change_30m=0.07,
         price_change_60m=0.12,
@@ -60,6 +61,24 @@ def make_resonance(**overrides) -> ResonanceStats:
         ma25_deviation=0.04,
     )
     return ResonanceStats(**{**stats.__dict__, **overrides})
+
+
+def make_slow_grind_5m_klines() -> list[Kline]:
+    rows: list[Kline] = []
+    price = 1.0
+    for index in range(120):
+        open_price = price
+        close = open_price * 1.001
+        high = close * 1.002
+        low = open_price * 0.999
+        volume = 3000.0 if index == 119 else 1000.0
+        rows.append(Kline(timestamp=index * 300_000, open=open_price, high=high, low=low, close=close, volume=volume))
+        price = close
+    return rows
+
+
+def make_flat_oi(length: int = 120) -> list[OpenInterestPoint]:
+    return [OpenInterestPoint(timestamp=index * 300_000, open_interest=1000.0) for index in range(length)]
 
 
 def alert_types(metrics: MarketMetrics, state: dict | None = None) -> set[AlertType]:
@@ -350,6 +369,7 @@ def test_volume_price_oi_l0_scores_stronger_when_volume_and_oi_both_expand() -> 
 def test_volume_price_oi_l0_requires_price_move() -> None:
     metrics = make_metrics(
         resonance=make_resonance(
+            price_change_5m=0.005,
             price_change_15m=0.01,
             price_change_30m=0.02,
             price_change_60m=0.03,
@@ -379,6 +399,47 @@ def test_volume_price_oi_l0_rejects_long_upper_wick_and_btc_dump() -> None:
 
     assert AlertRuleEngine(make_settings()).evaluate(upper_wick) == []
     assert AlertRuleEngine(make_settings()).evaluate(btc_dump) == []
+
+
+def test_volume_price_oi_l0_uses_real_latest_5m_change_not_full_window_change() -> None:
+    klines = make_slow_grind_5m_klines()
+    metrics = build_market_metrics(
+        {"symbol": "ALLO/USDT:USDT", "last": klines[-1].close, "percentage": 20, "quote_volume": 50_000_000, "high": klines[-1].high, "low": klines[0].low},
+        {"5m": klines},
+        btc_15m_change=0.0,
+        rank_24h=8,
+        oi_history=make_flat_oi(),
+        radar_rule_config=DEFAULT_RADAR_RULE_CONFIG,
+        required_timeframes={"5m"},
+    )
+
+    assert metrics is not None
+    assert metrics.stats_5m.change > 0.015
+    assert metrics.resonance is not None
+    assert metrics.resonance.price_change_5m < 0.015
+    assert AlertRuleEngine(make_settings()).evaluate(metrics) == []
+
+
+def test_volume_price_oi_l0_metadata_uses_real_latest_5m_change() -> None:
+    metrics = make_metrics(
+        resonance=make_resonance(
+            price_change_5m=0.018,
+            price_change_15m=0.028,
+            price_change_30m=0.03,
+            price_change_60m=0.04,
+            volume_ratio=2.1,
+            volume_continuity=1,
+            oi_change_15m=0.0,
+            oi_change_30m=0.0,
+            ma7=1.16,
+            ma25=1.30,
+        ),
+        stats_5m=TimeframeStats(change=0.20, close_position=0.72),
+    )
+
+    result = AlertRuleEngine(make_settings()).evaluate(metrics)[0]
+
+    assert result.metadata["price_change_5m"] == 0.018
 
 
 def test_volume_price_oi_l2_and_l3_keep_priority_over_l0() -> None:

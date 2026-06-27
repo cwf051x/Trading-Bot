@@ -38,7 +38,7 @@ def build_alert_digest(
 
     now_ms = now_ms or int(time.time() * 1000)
     since_ms = now_ms - int(lookback_seconds * 1000)
-    rows = [row for row in storage.get_market_alerts_since(since_ms, limit=1000) if int(row.get("score") or 0) >= min_score]
+    rows = [row for row in storage.get_market_alerts_since(since_ms, limit=1000) if _should_include_in_digest(row, min_score)]
     if not rows:
         return None
     items = sorted((_build_digest_item(symbol, symbol_rows) for symbol, symbol_rows in _group_by_symbol(rows).items()), key=lambda item: item["digest_score"], reverse=True)
@@ -123,6 +123,18 @@ def _group_by_symbol(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any
     return grouped
 
 
+def _should_include_in_digest(row: dict[str, Any], global_min_score: int) -> bool:
+    """Apply per-alert digest opt-out and digest score threshold.
+    按单条 alert 的 digest 开关和入榜分数门槛过滤。
+    """
+
+    metadata = _metadata(row)
+    if metadata.get("digest") is False:
+        return False
+    min_score = int(metadata.get("min_score_to_digest", global_min_score))
+    return int(row.get("score") or 0) >= min_score
+
+
 def _build_digest_item(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     rows = sorted(rows, key=lambda row: (int(row.get("timestamp") or 0), int(row.get("id") or 0)))
     first = rows[0]
@@ -133,7 +145,7 @@ def _build_digest_item(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any
     max_score = max(int(row.get("score") or 0) for row in rows)
     max_volume_ratio = max(_metric(row, "volume_ratio", float(row.get("volume_ratio") or 0.0)) for row in rows)
     max_oi_change = max(_metric(row, "oi_change_15m", _metric(row, "oi_change_30m", _metric(row, "oi_change_6h", 0.0))) for row in rows)
-    quote_volume_rank = min((_metric(row, "quote_volume_rank", _metric(row, "rank_24h", 9999)) for row in rows), default=9999)
+    rank_24h = min((_metric(row, "rank_24h", _metric(row, "gainer_rank_24h", 9999)) for row in rows), default=9999)
     risk_tags = _risk_tags(rows)
     multi_family_bonus = max(0, len({_family_and_stage(row)[0] for row in rows}) - 1) * 8
     upgrade_bonus = _upgrade_bonus(rows)
@@ -150,7 +162,7 @@ def _build_digest_item(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any
         "count": len(rows),
         "max_volume_ratio": max_volume_ratio,
         "max_oi_change": max_oi_change,
-        "quote_volume_rank": int(quote_volume_rank) if quote_volume_rank != 9999 else None,
+        "rank_24h": int(rank_24h) if rank_24h != 9999 else None,
         "risk_tags": risk_tags,
         "status_text": _status_text(rows, window_change, risk_tags),
         "digest_score": digest_score,
@@ -160,12 +172,12 @@ def _build_digest_item(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any
 def _format_digest_text(items: list[dict[str, Any]], since_ms: int, now_ms: int, top_n: int) -> str:
     lines = [f"🔥 15分钟雷达热榜 TOP{top_n}", f"时间：{_format_hhmm(since_ms)} - {_format_hhmm(now_ms)}", ""]
     for index, item in enumerate(items, start=1):
-        rank = f"#{item['quote_volume_rank']}" if item["quote_volume_rank"] is not None else "-"
+        rank = f"#{item['rank_24h']}" if item["rank_24h"] is not None else "-"
         lines.extend(
             [
                 f"{index}. {item['short_symbol']}  {format_pct(item['window_change'])}（{format_price(item['start_price'])} ➜ {format_price(item['latest_price'])}）",
                 f"   信号：{item['signal_text']}，共{item['count']}次",
-                f"   共振：量比 {item['max_volume_ratio']:.2f}x｜OI {format_pct(item['max_oi_change'])}｜成交额排名 {rank}",
+                f"   共振：量比 {item['max_volume_ratio']:.2f}x｜OI {format_pct(item['max_oi_change'])}｜涨幅排名 {rank}",
                 f"   状态：{item['status_text']}",
                 "",
             ]

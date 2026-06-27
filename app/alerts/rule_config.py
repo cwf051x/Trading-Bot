@@ -34,7 +34,7 @@ DEFAULT_RADAR_RULE_CONFIG: dict[str, Any] = {
                 "oi_change_15m_4": 16,
                 "both_volume_and_oi_bonus": 10,
                 "price_above_ma25_bonus": 5,
-                "top_quote_volume_rank_bonus": 5,
+                "top_gainer_rank_bonus": 5,
             },
             "auto_paper": False,
             "send_to_telegram": False,

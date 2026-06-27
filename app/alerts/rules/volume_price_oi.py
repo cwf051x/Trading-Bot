@@ -111,7 +111,7 @@ class VolumePriceOIRule(AlertRule):
         if not bool(config.get("enabled", True)):
             return None
         hard_filters = config.get("hard_filters", {})
-        price_move_ok = metrics.stats_5m.change >= float(hard_filters.get("price_change_5m", 0.015)) or stats.price_change_15m >= float(hard_filters.get("price_change_15m", 0.025))
+        price_move_ok = stats.price_change_5m >= float(hard_filters.get("price_change_5m", 0.015)) or stats.price_change_15m >= float(hard_filters.get("price_change_15m", 0.025))
         if not price_move_ok:
             return None
         if metrics.stats_5m.close_position < float(hard_filters.get("close_position_min", 0.60)):
@@ -147,7 +147,7 @@ class VolumePriceOIRule(AlertRule):
         if metrics.price > stats.ma25:
             score += int(scoring.get("price_above_ma25_bonus", 5))
         if metrics.rank_24h is not None and metrics.rank_24h <= 10:
-            score += int(scoring.get("top_quote_volume_rank_bonus", 5))
+            score += int(scoring.get("top_gainer_rank_bonus", 5))
         min_score = int(config.get("min_score_to_store", 60))
         score = min(100, score)
         if score < min_score:
@@ -171,9 +171,9 @@ class VolumePriceOIRule(AlertRule):
                 "min_score_to_digest": int(config.get("min_score_to_digest", 65)),
                 "volume_ratio": stats.volume_ratio,
                 "oi_change_15m": stats.oi_change_15m,
-                "price_change_5m": metrics.stats_5m.change,
+                "price_change_5m": stats.price_change_5m,
                 "price_change_15m": stats.price_change_15m,
-                "quote_volume_rank": metrics.rank_24h,
+                "rank_24h": metrics.rank_24h,
             },
         )
 

@@ -65,7 +65,7 @@ def test_digest_aggregates_same_symbol_and_compresses_stages(tmp_path) -> None:
             timestamp=base + offset,
             price=price,
             score=65 if stage == "L0" else 75,
-            raw={"metadata": {"rule_family": "volume_price_oi", "signal_stage": stage, "volume_ratio": 3.0, "oi_change_15m": 0.062, "quote_volume_rank": 5}},
+            raw={"metadata": {"rule_family": "volume_price_oi", "signal_stage": stage, "volume_ratio": 3.0, "oi_change_15m": 0.062, "rank_24h": 5}},
         )
 
     digest = build_alert_digest(storage, now_ms=base + 60, lookback_seconds=900, top_n=10, min_score=60)
@@ -77,7 +77,8 @@ def test_digest_aggregates_same_symbol_and_compresses_stages(tmp_path) -> None:
     assert "L0×2 → L1×1 → L2×1" in digest.text
     assert "量比 3.00x" in digest.text
     assert "OI +6.20%" in digest.text
-    assert "成交额排名 #5" in digest.text
+    assert "涨幅排名 #5" in digest.text
+    assert "成交额排名" not in digest.text
     assert "T0" not in digest.text
 
 
@@ -111,6 +112,55 @@ def test_digest_top_n_and_empty_window(tmp_path) -> None:
     assert "BBB" in digest.text
     assert "AAA" not in digest.text
     assert empty is None
+
+
+def test_digest_uses_per_alert_digest_score_threshold(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "digest.sqlite")
+    storage.initialize()
+    base = 1_800_000
+    save_alert(
+        storage,
+        symbol="LOW/USDT:USDT",
+        alert_type="VOLUME_PRICE_OI_L0",
+        timestamp=base,
+        price=1.0,
+        score=60,
+        raw={"metadata": {"rule_family": "volume_price_oi", "signal_stage": "L0", "digest": True, "min_score_to_digest": 65}},
+    )
+    save_alert(
+        storage,
+        symbol="OK/USDT:USDT",
+        alert_type="VOLUME_PRICE_OI_L0",
+        timestamp=base + 1,
+        price=1.1,
+        score=65,
+        raw={"metadata": {"rule_family": "volume_price_oi", "signal_stage": "L0", "digest": True, "min_score_to_digest": 65}},
+    )
+
+    digest = build_alert_digest(storage, now_ms=base + 60, lookback_seconds=900, top_n=10, min_score=60)
+
+    assert digest is not None
+    assert "OK" in digest.text
+    assert "LOW" not in digest.text
+
+
+def test_digest_skips_alert_when_metadata_digest_is_false(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "digest.sqlite")
+    storage.initialize()
+    base = 1_800_000
+    save_alert(
+        storage,
+        symbol="SKIP/USDT:USDT",
+        alert_type="PUMP_PULLBACK_P1",
+        timestamp=base,
+        price=1.0,
+        score=80,
+        raw={"metadata": {"rule_family": "pump_pullback_second_wave", "pump_pullback_level": "P1", "digest": False}},
+    )
+
+    digest = build_alert_digest(storage, now_ms=base + 60, lookback_seconds=900, top_n=10, min_score=60)
+
+    assert digest is None
 
 
 def test_digest_manager_respects_interval_and_disabled_telegram(tmp_path) -> None:
