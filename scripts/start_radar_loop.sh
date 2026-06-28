@@ -27,7 +27,7 @@ fi
 
 run_loop() {
   echo "Starting alert radar loop; appending logs to logs/alert_radar.log"
-  PYTHONUNBUFFERED=1 "$PYTHON_BIN" scripts/run_alert_radar_loop.py 2>&1 | tee -a "$ROOT_DIR/logs/alert_radar.log"
+  PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1 "$PYTHON_BIN" scripts/run_alert_radar_loop.py 2>&1 | tee -a "$ROOT_DIR/logs/alert_radar.log"
 }
 
 if command -v flock >/dev/null 2>&1; then
