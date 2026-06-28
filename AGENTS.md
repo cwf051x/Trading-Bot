@@ -2,6 +2,17 @@
 
 本文件是给 Codex/Agent 使用的项目级约束，不替代 README。只记录后续自动化编码、排障、测试和发布时必须稳定遵守的规则。
 
+## Startup Context
+
+每个新的 Codex 对话、功能分支或 PR 开始前，必须先阅读：
+
+1. `PROJECT_CONTEXT.md`：当前项目状态和新对话启动上下文。
+2. `AGENTS.md`：Codex/Agent 必须遵守的硬规则。
+3. `docs/ai-review-workflow.md`：PR 审查闭环流程。
+4. `README.md`：安装、配置、运行和功能说明。
+
+不要把已合并 PR 的历史细节塞进本文件；长期项目状态应更新到 `PROJECT_CONTEXT.md`，审查流程变更应更新到 `docs/ai-review-workflow.md`。
+
 ## Karpathy-Style AI Coding Discipline
 
 This project uses strict AI coding discipline to reduce common LLM coding mistakes.

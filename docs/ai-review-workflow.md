@@ -4,6 +4,8 @@
 
 目标不是让 Codex 写完代码就直接上线，而是建立一个稳定、可追溯、可返工的开发闭环。
 
+开始新任务前，Codex 应先阅读 `PROJECT_CONTEXT.md`、`AGENTS.md`、`README.md` 和本文件；其中 `PROJECT_CONTEXT.md` 负责当前项目稳定上下文，`AGENTS.md` 负责硬规则，本文件只负责 PR 审查闭环。
+
 ```text
 用户提出需求
   ↓

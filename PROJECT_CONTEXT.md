@@ -1,101 +1,110 @@
-# Trading-Bot 项目交接页
+# Trading-Bot Project Context
 
-## 1. 项目基本信息
+本文是新 Codex 对话的项目启动页，只记录当前 `main` 分支的稳定事实。详细开发硬规则见 `AGENTS.md`，PR 审查闭环见 `docs/ai-review-workflow.md`，运行和配置细节以 `README.md` 为准。
 
-- 项目名称：Trading-Bot
-- 本地路径：`/Users/chenweifeng/Documents/Trading-Bot`
-- 项目类型：Python 加密货币永续合约交易系统
-- 当前阶段：已建立项目骨架、模拟盘、回测、风控、Telegram 通知、部署相关流程；后续继续围绕策略、生产稳定性和 Web 面板推进。
-- 安全边界：默认不真实交易，live 模式必须有额外显式开关。
+## 1. 项目定位
 
-## 2. 项目目标
+Trading-Bot 是 Python 3.11+ 的 Binance USDT-M Futures 行情雷达与模拟交易系统。当前阶段以行情监控、雷达信号、Telegram 通知、回测、paper 模拟盘、SQLite 记录和 FastAPI/Jinja2 Web Admin 为主。
 
-第一阶段只接 Binance USDT-M Futures，先实现行情监控、策略信号、回测、模拟盘和 Telegram 通知。后续再逐步增加真实下单、风控增强、Web 面板和跟单能力。
+默认不做真实交易。`live` 模式和真实下单能力不能被当作普通配置随手打开；任何涉及资金、仓位、下单、API key、服务器和网络暴露面的改动都必须保守处理。
 
-## 3. 当前状态
+## 2. 当前 main 已具备的关键能力
 
-已知已经推进过：
+- 配置系统：`.env` 读取运行配置，模板在 `.env.example` / `.env.production.example`，真实密钥不提交。
+- Binance 行情客户端：支持 K 线、ticker、资金费率、Open Interest、本地代理和生产直连配置。
+- 行情雷达：`scanner` 负责候选池、缓存、并发、profiling 和指标构建；`rules` 插件式运行；`digest` 聚合 Telegram 热榜。
+- Paper 模拟盘：支持多币种轮询、已完成 K 线 high/low 止损止盈、SQLite 记录、风控拦截和订单通知隔离。
+- SQLite 存储：保存 alerts、orders、positions、trades、state 和 Web Admin 查询数据。
+- Telegram：雷达提醒和订单/执行通知分离，单次外部接口抖动不应刷屏。
+- Web Admin：FastAPI + Jinja2 + 原生 CSS 的暗色交易工具台。
+- 回测与 replay：支持 CSV 回测、雷达历史数据回放和基础可信度验证。
+- Docker/部署说明：已有 Docker Compose、Vultr 部署说明，但生产部署必须由用户明确要求。
 
-- Python 3.11+ 项目骨架。
-- 配置系统和 `.env.example`。
-- Binance 行情客户端。
-- 策略接口和示例策略。
-- 风控模块。
-- 模拟盘和 SQLite 交易记录。
-- 回测模块。
-- Telegram 通知。
-- Docker / Docker Compose 部署说明。
-- GitHub 推送和 GitHub CLI 排障。
-- 生产环境 Binance timeout、代理/直连差异、部署同步排除规则排障。
+## 3. 当前雷达体系
 
-## 4. 网络与代理策略
+`config/radar_rules.yaml` 是当前雷达规则阈值和开关的主要来源。
 
-本项目访问外部服务较多，网络失败不能直接判断为代码错误。
+- `volume_price_oi`：量价 OI 共振体系。
+  - L0：早期观察层。价格涨幅是硬门槛，成交量或 OI 至少一个提供质量确认；默认不 auto paper、不单条强推 Telegram，可入库并进入 digest。
+  - L1/L2/L3：量价 OI 共振拉升层级。
+- `hourly_trend`：小时级单边趋势雷达。
+  - T1/T2/T3/T4 分别表示趋势启动、趋势加速、回踩接多观察和高位过热风险。
+- `pump_pullback_second_wave`：爆拉后健康回调 + 二波启动雷达。
+  - P1/P2/P3/P4 分别表示健康回调观察、二波启动预警、二波确认突破和二波失败风险。
 
-重点外部服务：
+命名边界必须保持清晰：L0 不能写成 T0；T 系列只属于 `hourly_trend`；P 系列只属于 `pump_pullback_second_wave`。
 
-- Binance Futures API。
-- Telegram Bot API。
-- GitHub。
-- Python 包源。
-- Docker Hub。
+## 4. 当前 Telegram Digest 行为
 
-建议配置矩阵：
+- `ALERT_DIGEST_INTERVAL_SECONDS=900`：控制发送频率，默认每 15 分钟最多一条。
+- `ALERT_DIGEST_LOOKBACK_SECONDS=14400`：主热榜默认统计最近 4 小时。
+- `ALERT_DIGEST_ACTIVE_SECONDS=3600`：用于活跃度加减分，不硬过滤旧 alert。
+- `ALERT_DIGEST_NEWCOMER_SECONDS=900`：最近新晋异动窗口。
+- `ALERT_DIGEST_NEWCOMER_TOP_N=5`：新晋异动默认最多展示 5 个。
 
-| 环境 | 建议模式 | 说明 |
-| --- | --- | --- |
-| 本地开发 | `proxy` 或 `auto` | 外部 API 失败时先代理重试 |
-| 生产服务器 | `direct` 优先 | 避免误用本地代理地址 |
-| 排障临时状态 | `auto` | 直连失败后代理 fallback |
+Digest 是通用聚合能力，兼容 `volume_price_oi`、`hourly_trend`、`pump_pullback_second_wave` 和未来 alert type。它尊重每条 alert metadata 中的 `digest` 和 `min_score_to_digest`。当前文案使用“涨幅排名”，不要写成“成交额排名”，除非未来真正实现成交额排名。
 
-必须在 README / `.env.example` 中说明：
+## 5. 安全边界
 
-- 是否需要代理。
-- 哪些请求可能走代理。
-- 哪些本地地址不走代理。
-- 如何验证代理是否生效。
-- 生产环境是否禁止使用本地代理地址。
+- 默认不真实交易，禁止把真实交易当普通配置打开。
+- 不提交 `.env`、API key、token、secret、chat id、代理地址或生产私有配置。
+- 不部署生产，除非用户明确要求。
+- 不修改 Docker、Nginx、端口、防火墙、证书，除非用户明确要求。
+- 涉及交易、下单、资金、仓位、止损止盈、API key、缓存、定时任务、数据库、Docker、Nginx、端口、防火墙的改动必须保守、小步、可验证。
 
-## 5. 部署注意事项
+## 6. 新 Codex 对话启动规则
 
-部署同步前必须 dry-run：
+每个新功能、新 PR 或新阶段，建议新开 Codex 对话。新对话开始时，Codex 必须先阅读：
+
+1. `PROJECT_CONTEXT.md`
+2. `AGENTS.md`
+3. `docs/ai-review-workflow.md`
+4. `README.md`
+5. 与本次任务相关的源码和配置文件
+
+## 7. 标准开发流程
+
+从最新 `main` 新建独立分支，小步修改，先跑相关窄测试，再按风险扩大验证。完成后提交 commit、创建或更新 PR，并输出修改摘要、测试结果、风险说明和可复制给 GPT 的审查提示词。若 GPT 要求返工，必须在同一 PR 分支追加 commit。是否合并和部署由用户决定。
+
+详细流程见 `docs/ai-review-workflow.md`。
+
+## 8. 常用测试命令
 
 ```bash
-rsync -av --dry-run ./ user@host:/deploy/path/
+.venv/bin/python -m pytest -q
+.venv/bin/python -m compileall app scripts tests
+.venv/bin/python scripts/check_no_real_trading_calls.py
+docker compose config >/tmp/trading-bot-compose-config.txt
 ```
 
-重点检查排除规则：
+根据任务追加局部测试，例如：
 
-- 排除运行数据时用 `/data/`，不要误伤 `app/data/`。
-- 不同步 `.env`、数据库、日志、缓存、生成产物。
-- 同步后检查服务状态和最近日志。
+```bash
+.venv/bin/python -m pytest tests/test_config.py -q
+```
 
-## 6. 常见坑
-
-| 问题 | 表现 | 快速判断 | 处理办法 |
-| --- | --- | --- | --- |
-| Binance timeout | paper cycle 失败或 Telegram 噪音通知 | 直连偶发 timeout | 增加超时、重试、降噪；区分生产直连和本地代理 |
-| GitHub CLI 不可用 | Codex 右侧 GitHub CLI 不可用 | `which gh` 找不到或未登录 | 安装 `gh`，执行 `gh auth login` 和 `gh auth setup-git` |
-| HTTPS push 要密码 | GitHub 密码推送失败 | 终端提示 Password | 使用 PAT，不是 GitHub 登录密码 |
-| rsync 排除误伤 | 远端缺少代码目录 | dry-run 可提前发现 | 用 `/data/` 这种根路径排除 |
-
-## 7. Codex 使用提示
-
-继续开发时：
+## 9. 新任务提示词模板
 
 ```text
-请先阅读 Trading-Bot 项目交接页和 README，确认默认不真实交易、当前网络模式、部署方式和测试命令。接下来只处理：<本次目标>。
+你现在在 Trading-Bot 项目的新 Codex 对话中工作。
+
+请先阅读并遵守：
+- PROJECT_CONTEXT.md
+- AGENTS.md
+- docs/ai-review-workflow.md
+- README.md
+
+本次任务：
+<粘贴任务>
+
+要求：
+1. 从最新 main 新建独立分支。
+2. 不直接修改 main/master。
+3. 不直接合并 PR。
+4. 不部署生产。
+5. 不新增真实下单能力。
+6. 不修改 API key/token/env secret。
+7. 不修改 Docker/Nginx/端口/防火墙，除非本任务明确要求。
+8. 不扩大修改范围。
+9. 完成后创建 PR，并输出修改摘要、测试结果、风险说明和给 GPT 的审查提示词。
 ```
-
-排障时：
-
-```text
-请按网络排障 Runbook 处理。外部请求失败时，先直连，再代理重试，再判断 DNS、TLS、认证、限流、远端服务和代码逻辑。
-```
-
-## 8. 下一步建议
-
-- [ ] 把本交接页同步到 `/Users/chenweifeng/Documents/Trading-Bot/PROJECT_CONTEXT.md`。
-- [ ] 补齐当前真实测试命令和部署命令。
-- [ ] 补齐生产服务器服务名、部署目录和健康检查命令。
-- [ ] 更新 README 的代理策略章节。
