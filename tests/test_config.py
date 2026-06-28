@@ -68,6 +68,14 @@ def test_settings_defaults(monkeypatch) -> None:
         "ALERT_COOLDOWN_A_SECONDS",
         "ALERT_COOLDOWN_B_SECONDS",
         "ALERT_COOLDOWN_C_SECONDS",
+        "ALERT_DIGEST_ENABLED",
+        "ALERT_DIGEST_INTERVAL_SECONDS",
+        "ALERT_DIGEST_TOP_N",
+        "ALERT_DIGEST_LOOKBACK_SECONDS",
+        "ALERT_DIGEST_ACTIVE_SECONDS",
+        "ALERT_DIGEST_NEWCOMER_SECONDS",
+        "ALERT_DIGEST_NEWCOMER_TOP_N",
+        "ALERT_DIGEST_MIN_SCORE",
         "ALERT_SURGE_3M_THRESHOLD",
         "ALERT_SURGE_5M_THRESHOLD",
         "ALERT_SURGE_15M_THRESHOLD",
@@ -150,6 +158,14 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.alert_send_a_level is True
     assert settings.alert_send_b_level is True
     assert settings.alert_send_c_level is False
+    assert settings.alert_digest_enabled is True
+    assert settings.alert_digest_interval_seconds == 900
+    assert settings.alert_digest_top_n == 10
+    assert settings.alert_digest_lookback_seconds == 14400
+    assert settings.alert_digest_active_seconds == 3600
+    assert settings.alert_digest_newcomer_seconds == 900
+    assert settings.alert_digest_newcomer_top_n == 5
+    assert settings.alert_digest_min_score == 60
     assert settings.alert_btc_dump_15m_threshold == -0.008
     assert settings.alert_min_breakout_close_position == 0.65
     assert settings.alert_second_leg_min_close_position == 0.55
