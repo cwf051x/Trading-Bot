@@ -42,7 +42,7 @@ def build_alert_digest(
 
     now_ms = now_ms or int(time.time() * 1000)
     since_ms = now_ms - int(lookback_seconds * 1000)
-    rows = [row for row in storage.get_market_alerts_since(since_ms, limit=1000) if _should_include_in_digest(row, min_score)]
+    rows = [row for row in storage.get_market_alerts_since(since_ms, limit=None) if _should_include_in_digest(row, min_score)]
     if not rows:
         return None
     newcomer_since_ms = now_ms - int(newcomer_seconds * 1000)
@@ -195,6 +195,7 @@ def _build_digest_item(symbol: str, rows: list[dict[str, Any]], *, now_ms: int, 
         "change_15m": _window_change(rows, now_ms - 900 * 1000),
         "change_1h": _window_change(rows, now_ms - 3600 * 1000),
         "change_4h": window_change,
+        "change_newcomer": _window_change(rows, newcomer_since_ms),
         "digest_score": digest_score,
     }
 
@@ -221,7 +222,7 @@ def _format_digest_text(items: list[dict[str, Any]], since_ms: int, now_ms: int,
         lines.extend([f"⚡ 最近{_duration_label(newcomer_seconds * 1000)}新晋异动"])
         for index, item in enumerate(newcomer_items, start=1):
             lines.append(
-                f"{index}. {item['short_symbol']} {format_pct(item['change_15m'] if item['change_15m'] is not None else item['window_change'])}｜{item['signal_text']}｜量比 {item['max_volume_ratio']:.2f}x｜OI {format_pct(item['max_oi_change'])}"
+                f"{index}. {item['short_symbol']} {format_pct(item['change_newcomer'] if item['change_newcomer'] is not None else item['window_change'])}｜{item['signal_text']}｜量比 {item['max_volume_ratio']:.2f}x｜OI {format_pct(item['max_oi_change'])}"
             )
     return "\n".join(lines).strip()
 

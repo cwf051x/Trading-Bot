@@ -131,6 +131,12 @@ class SQLiteStorage:
             )
             connection.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_market_alerts_timestamp
+                ON market_alerts(timestamp)
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS alert_states (
                     symbol TEXT PRIMARY KEY,
                     state TEXT NOT NULL,
@@ -599,21 +605,31 @@ class SQLiteStorage:
                 rows = connection.execute("SELECT * FROM market_alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
-    def get_market_alerts_since(self, since_ms: int, limit: int = 500) -> list[dict[str, Any]]:
+    def get_market_alerts_since(self, since_ms: int, limit: int | None = 500) -> list[dict[str, Any]]:
         """Return alerts created after a timestamp for digest aggregation.
         返回指定时间之后的提醒，供热榜汇总聚合使用。
         """
 
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT * FROM market_alerts
-                WHERE timestamp >= ?
-                ORDER BY timestamp ASC, id ASC
-                LIMIT ?
-                """,
-                (since_ms, limit),
-            ).fetchall()
+            if limit is None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM market_alerts
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp ASC, id ASC
+                    """,
+                    (since_ms,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM market_alerts
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp ASC, id ASC
+                    LIMIT ?
+                    """,
+                    (since_ms, limit),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def get_last_market_alert(self, symbol: str, alert_type: str, sent_only: bool = False) -> dict[str, Any] | None:
