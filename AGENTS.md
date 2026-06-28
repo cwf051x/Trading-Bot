@@ -2,6 +2,54 @@
 
 本文件是给 Codex/Agent 使用的项目级约束，不替代 README。只记录后续自动化编码、排障、测试和发布时必须稳定遵守的规则。
 
+## Karpathy-Style AI Coding Discipline
+
+This project uses strict AI coding discipline to reduce common LLM coding mistakes.
+
+### 1. Think Before Coding
+
+Before implementing non-trivial changes:
+- State assumptions explicitly.
+- If requirements are ambiguous, list interpretations instead of silently choosing one.
+- Push back if the requested solution is more complex than necessary.
+- For risky areas such as trading logic, order execution, API keys, caching, scheduling, Docker, Nginx, ports, and firewall rules, prefer conservative changes.
+
+### 2. Simplicity First
+
+Implement the smallest change that solves the stated problem.
+- Do not add speculative features.
+- Do not introduce abstractions for single-use logic.
+- Do not add configurability unless requested.
+- If a small patch can solve the issue, do not rewrite the module.
+
+### 3. Surgical Changes
+
+Touch only files directly required by the task.
+- Do not refactor unrelated code.
+- Do not reformat unrelated files.
+- Do not remove comments or code you do not fully understand.
+- If unrelated dead code is noticed, mention it in the handoff instead of deleting it.
+- Every changed line should be traceable to the user request or required verification.
+
+### 4. Goal-Driven Execution
+
+Convert tasks into verifiable outcomes.
+For every non-trivial change:
+- Define success criteria before coding.
+- Add or update tests when practical.
+- Run the narrowest relevant test first, then broader checks if needed.
+- If tests cannot be run, explain why and describe the manual verification path.
+
+### 5. Delivery Requirements
+
+At handoff, always include:
+- Summary of changes.
+- Files changed.
+- Tests run and results.
+- Risks or limitations.
+- Suggested GPT review prompt.
+- Whether the PR is safe to merge or still needs review.
+
 ## Must Follow
 
 - 本项目默认只运行行情监控、雷达信号、回测、模拟盘、SQLite 记录、Telegram 通知和 Web Admin。
