@@ -20,6 +20,7 @@ class AlertType(str, Enum):
     STRONG_PULLBACK_WATCH = "STRONG_PULLBACK_WATCH"
     PULLBACK_SECOND_LEG = "PULLBACK_SECOND_LEG"
     HIGH_RISK_EXTENSION = "HIGH_RISK_EXTENSION"
+    VOLUME_PRICE_OI_L0 = "VOLUME_PRICE_OI_L0"
     VOLUME_PRICE_OI_RESONANCE = "VOLUME_PRICE_OI_RESONANCE"
     HOURLY_TREND_T1 = "HOURLY_TREND_T1"
     HOURLY_TREND_T2 = "HOURLY_TREND_T2"
@@ -70,6 +71,7 @@ class ResonanceStats:
     量价 OI 共振使用的派生字段。
     """
 
+    price_change_5m: float = 0.0
     price_change_15m: float = 0.0
     price_change_30m: float = 0.0
     price_change_60m: float = 0.0

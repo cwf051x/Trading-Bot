@@ -131,6 +131,8 @@ def build_resonance_stats(klines_5m: list[Kline], oi_history: list[OpenInterestP
     body = abs(current.close - current.open)
     ma25 = moving_average(closes, 25)
     return ResonanceStats(
+        # 最近 5m 涨幅按两根已完成 5m K 线 close-to-close 计算，避免误用整段缓存窗口涨幅。
+        price_change_5m=pct_change(klines_5m[-2].close, current.close),
         price_change_15m=pct_change(klines_5m[-4].close, current.close),
         price_change_30m=pct_change(klines_5m[-7].close, current.close),
         price_change_60m=pct_change(klines_5m[-13].close, current.close),

@@ -79,6 +79,11 @@ class FakeNotifier:
         return False
 
 
+class FailingDigest:
+    def maybe_send(self) -> bool:
+        raise RuntimeError("digest boom")
+
+
 class NoisyRules:
     def evaluate(self, metrics: MarketMetrics, state: dict | None = None) -> list[AlertRuleResult]:
         return [
@@ -94,6 +99,27 @@ class MultiFamilyRules:
             AlertRuleResult(AlertType.VOLUME_PRICE_OI_RESONANCE, 85, ["resonance / 共振"], "volume price oi"),
             AlertRuleResult(AlertType.HOURLY_TREND_T2, 86, ["trend / 趋势"], "hourly trend", metadata={"auto_paper": False}),
             AlertRuleResult(AlertType.PUMP_PULLBACK_P1, 70, ["pullback / 回调"], "pump watch", metadata={"send_to_telegram": False}),
+        ]
+
+
+class VolumePriceOIMixedRules:
+    def evaluate(self, metrics: MarketMetrics, state: dict | None = None) -> list[AlertRuleResult]:
+        return [
+            AlertRuleResult(AlertType.VOLUME_PRICE_OI_L0, 74, ["l0 / 早期"], "watch", metadata={"auto_paper": False, "send_to_telegram": False, "digest": True, "resonance_level": "L0"}),
+            AlertRuleResult(AlertType.VOLUME_PRICE_OI_RESONANCE, 85, ["l2 / 主升"], "track", metadata={"auto_paper": True, "resonance_level": "L2"}),
+        ]
+
+
+class L0Rules:
+    def evaluate(self, metrics: MarketMetrics, state: dict | None = None) -> list[AlertRuleResult]:
+        return [
+            AlertRuleResult(
+                AlertType.VOLUME_PRICE_OI_L0,
+                74,
+                ["l0 / 早期"],
+                "watch",
+                metadata={"auto_paper": False, "send_to_telegram": False, "digest": True, "resonance_level": "L0"},
+            )
         ]
 
 
@@ -125,6 +151,19 @@ def test_radar_keeps_one_alert_per_rule_family_for_same_symbol(tmp_path) -> None
         AlertType.PUMP_PULLBACK_P1,
     }
     assert len(storage.get_market_alerts(limit=20)) == 3
+
+
+def test_radar_keeps_l2_over_l0_for_volume_price_oi_family(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_MIN_SCORE_TO_STORE=60, ALERT_MAX_ALERTS_PER_CYCLE=5)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings)
+    radar.rules = VolumePriceOIMixedRules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type == AlertType.VOLUME_PRICE_OI_RESONANCE
+    assert alerts[0].raw["metadata"]["resonance_level"] == "L2"
 
 
 class EntryRules:
@@ -172,6 +211,37 @@ def test_radar_does_not_create_paper_order_for_risk_only_trend_alert(tmp_path) -
 
     assert len(alerts) == 1
     assert storage.get_orders() == []
+
+
+def test_radar_l0_is_stored_without_single_telegram_or_auto_paper(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_AUTO_PAPER_TRADING_ENABLED=True, ALERT_MIN_SCORE_TO_STORE=60, ACCOUNT_EQUITY=10_000)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    paper = PaperTradingEngine(storage=storage, notifier=None, initial_equity=settings.account_equity, leverage=settings.paper_leverage)
+    risk = RiskManager(account_equity=settings.account_equity, btc_drop_threshold_15m=settings.btc_drop_threshold_15m)
+    notifier = FakeNotifier()
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, notifier, settings, paper=paper, risk_manager=risk)
+    radar.rules = L0Rules()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type == AlertType.VOLUME_PRICE_OI_L0
+    assert alerts[0].sent_to_telegram is False
+    assert storage.get_orders() == []
+    assert storage.get_market_alerts(limit=1)[0]["sent_to_telegram"] == 0
+
+
+def test_radar_digest_failure_does_not_drop_cycle_alerts(tmp_path) -> None:
+    settings = Settings(_env_file=None, ALERT_MIN_SCORE_TO_STORE=60, ALERT_MAX_ALERTS_PER_CYCLE=5)
+    storage = SQLiteStorage(tmp_path / "radar.sqlite")
+    radar = MarketAlertRadar(FakeScanner(["COIN/USDT:USDT"]), storage, FakeNotifier(), settings)
+    radar.rules = L0Rules()
+    radar.digest = FailingDigest()
+
+    alerts = radar.run_once()
+
+    assert len(alerts) == 1
+    assert alerts[0].alert_type == AlertType.VOLUME_PRICE_OI_L0
 
 
 def test_radar_auto_paper_passes_current_alert_price_to_risk(tmp_path) -> None:

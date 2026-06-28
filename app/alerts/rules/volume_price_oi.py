@@ -97,4 +97,96 @@ class VolumePriceOIRule(AlertRule):
                 "L1 异动观察，等待是否升级为主升确认",
                 metadata={"resonance_level": "L1", "auto_paper": False},
             )
-        return None
+        return self._volume_price_oi_l0(metrics)
+
+    def _volume_price_oi_l0(self, metrics: MarketMetrics) -> AlertRuleResult | None:
+        """Detect early price-led moves with volume/OI quality scoring.
+        用价格作为硬门槛，并用成交量与 OI 做质量打分，识别早期异动。
+        """
+
+        stats = metrics.resonance
+        if stats is None:
+            return None
+        config = self.settings.radar_rule_config["volume_price_oi"].get("l0", {})
+        if not bool(config.get("enabled", True)):
+            return None
+        hard_filters = config.get("hard_filters", {})
+        price_move_ok = stats.price_change_5m >= float(hard_filters.get("price_change_5m", 0.015)) or stats.price_change_15m >= float(hard_filters.get("price_change_15m", 0.025))
+        if not price_move_ok:
+            return None
+        if metrics.stats_5m.close_position < float(hard_filters.get("close_position_min", 0.60)):
+            return None
+        if bool(hard_filters.get("price_above_ma7", True)) and metrics.price <= stats.ma7:
+            return None
+        if bool(hard_filters.get("reject_long_upper_wick", True)) and stats.long_upper_wick:
+            return None
+        if metrics.btc_15m_change <= float(hard_filters.get("btc_15m_drop_min", -0.008)):
+            return None
+
+        scoring = config.get("scoring", {})
+        score = int(scoring.get("base_score", 55))
+        volume_points = self._threshold_points(
+            stats.volume_ratio,
+            [
+                (3.0, int(scoring.get("volume_ratio_3_0", 20))),
+                (2.0, int(scoring.get("volume_ratio_2_0", 14))),
+                (1.5, int(scoring.get("volume_ratio_1_5", 8))),
+            ],
+        )
+        oi_points = self._threshold_points(
+            stats.oi_change_15m,
+            [
+                (0.04, int(scoring.get("oi_change_15m_4", 16))),
+                (0.02, int(scoring.get("oi_change_15m_2", 10))),
+                (0.01, int(scoring.get("oi_change_15m_1", 6))),
+            ],
+        )
+        # MA 和涨幅榜只能辅助加分，L0 至少需要成交量或 OI 任一质量确认。
+        if volume_points <= 0 and oi_points <= 0:
+            return None
+        score += volume_points + oi_points
+        if volume_points > 0 and oi_points > 0:
+            score += int(scoring.get("both_volume_and_oi_bonus", 10))
+        if metrics.price > stats.ma25:
+            score += int(scoring.get("price_above_ma25_bonus", 5))
+        if metrics.rank_24h is not None and metrics.rank_24h <= 10:
+            score += int(scoring.get("top_gainer_rank_bonus", 5))
+        min_score = int(config.get("min_score_to_store", 60))
+        score = min(100, score)
+        if score < min_score:
+            return None
+        return AlertRuleResult(
+            AlertType.VOLUME_PRICE_OI_L0,
+            score,
+            [
+                "L0 early volume-price-OI watch / L0 量价OI早期异动",
+                "price move is confirmed, volume and OI are quality scores / 价格涨幅达标，成交量和OI作为质量加分",
+            ],
+            "L0 早期观察，先入热榜跟踪，等待是否升级 L1/L2",
+            metadata={
+                "resonance_level": "L0",
+                "signal_stage": "L0",
+                "rule_family": "volume_price_oi",
+                "auto_paper": bool(config.get("auto_paper", False)),
+                "send_to_telegram": bool(config.get("send_to_telegram", False)),
+                "digest": bool(config.get("digest", True)),
+                "min_score_to_store": min_score,
+                "min_score_to_digest": int(config.get("min_score_to_digest", 65)),
+                "volume_ratio": stats.volume_ratio,
+                "oi_change_15m": stats.oi_change_15m,
+                "price_change_5m": stats.price_change_5m,
+                "price_change_15m": stats.price_change_15m,
+                "rank_24h": metrics.rank_24h,
+            },
+        )
+
+    @staticmethod
+    def _threshold_points(value: float, thresholds: list[tuple[float, int]]) -> int:
+        """Return points for the highest matched threshold.
+        返回命中的最高阈值对应加分。
+        """
+
+        for threshold, points in thresholds:
+            if value >= threshold:
+                return points
+        return 0

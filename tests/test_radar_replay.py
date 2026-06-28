@@ -44,7 +44,8 @@ def test_replay_symbol_records_alert_and_forward_outcomes() -> None:
     assert outcomes
     first = outcomes[0]
     assert first.symbol == "ALLO/USDT:USDT"
-    assert first.signal_type == "VOLUME_PRICE_OI_RESONANCE"
+    assert first.signal_type == "VOLUME_PRICE_OI_L0"
+    assert any(item.signal_type == "VOLUME_PRICE_OI_RESONANCE" for item in outcomes)
     assert first.trigger_price > 0
     assert first.forward_returns["15m"] != 0
     assert first.max_favorable_return > 0
@@ -96,7 +97,9 @@ def test_replay_script_writes_detail_and_summary_csv(monkeypatch, tmp_path) -> N
 
     assert output_path.exists()
     assert summary_path.exists()
-    assert "VOLUME_PRICE_OI_RESONANCE" in output_path.read_text(encoding="utf-8")
+    output_text = output_path.read_text(encoding="utf-8")
+    assert "VOLUME_PRICE_OI_L0" in output_text
+    assert "VOLUME_PRICE_OI_RESONANCE" in output_text
     assert "win_rate_1h" in summary_path.read_text(encoding="utf-8")
 
 

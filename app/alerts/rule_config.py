@@ -12,6 +12,34 @@ from typing import Any
 DEFAULT_RADAR_RULE_CONFIG: dict[str, Any] = {
     "volume_price_oi": {
         "enabled": True,
+        "l0": {
+            "enabled": True,
+            "min_score_to_store": 60,
+            "min_score_to_digest": 65,
+            "hard_filters": {
+                "price_change_5m": 0.015,
+                "price_change_15m": 0.025,
+                "close_position_min": 0.60,
+                "price_above_ma7": True,
+                "reject_long_upper_wick": True,
+                "btc_15m_drop_min": -0.008,
+            },
+            "scoring": {
+                "base_score": 55,
+                "volume_ratio_1_5": 8,
+                "volume_ratio_2_0": 14,
+                "volume_ratio_3_0": 20,
+                "oi_change_15m_1": 6,
+                "oi_change_15m_2": 10,
+                "oi_change_15m_4": 16,
+                "both_volume_and_oi_bonus": 10,
+                "price_above_ma25_bonus": 5,
+                "top_gainer_rank_bonus": 5,
+            },
+            "auto_paper": False,
+            "send_to_telegram": False,
+            "digest": True,
+        },
         "l1": {
             "price_change_15m": 0.03,
             "volume_ratio": 1.6,
