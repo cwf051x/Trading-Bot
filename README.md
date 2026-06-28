@@ -127,7 +127,7 @@ ALERT_FUNDING_RATE_TTL_SECONDS=900
 
 radar-loop profiling 会输出 `scan_timeframes`、`scan_oi_periods`、`scan_requires_funding`，用于确认本轮只采集启用规则声明的数据需求；同时输出 `diagnostic_*` 字段，例如 `diagnostic_resonance_stats`、`diagnostic_trend_stats`、`diagnostic_pump_has_first_pump` 和各规则关键闸口计数，用来判断低命中是数据覆盖不足还是规则条件过严。
 
-`ALERT_DIGEST_ENABLED=true` 时，radar loop 会按 `ALERT_DIGEST_INTERVAL_SECONDS` 默认每 15 分钟读取最近 `ALERT_DIGEST_LOOKBACK_SECONDS` 内的 `market_alerts`，把同币多次信号聚合成一条 Telegram 热榜。热榜默认取 `ALERT_DIGEST_TOP_N=10`，最低入榜分数 `ALERT_DIGEST_MIN_SCORE=60`；它不影响单条 alert 入库，也不扩大自动模拟下单范围。
+`ALERT_DIGEST_ENABLED=true` 时，radar loop 会按 `ALERT_DIGEST_INTERVAL_SECONDS` 默认每 15 分钟发送一次 Telegram 热榜。digest 发送间隔和统计窗口是两个概念：`ALERT_DIGEST_INTERVAL_SECONDS` 控制多久推送一次；`ALERT_DIGEST_LOOKBACK_SECONDS` 控制主热榜回看多长时间，默认 14400 秒，也就是主榜统计过去 4 小时；`ALERT_DIGEST_NEWCOMER_SECONDS` 控制“最近新晋异动”模块，默认 900 秒；`ALERT_DIGEST_ACTIVE_SECONDS` 控制主榜活跃度降权窗口，默认 3600 秒。热榜默认取 `ALERT_DIGEST_TOP_N=10`，新晋异动默认取 `ALERT_DIGEST_NEWCOMER_TOP_N=5`，最低入榜分数 `ALERT_DIGEST_MIN_SCORE=60`；它不影响单条 alert 入库，也不扩大自动模拟下单范围。
 
 `config/radar_rules.yaml` 当前包含：
 
