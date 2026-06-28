@@ -27,6 +27,7 @@ def test_radar_and_paper_start_scripts_append_to_work_logs() -> None:
         assert f"LOCK_FILE=\"$ROOT_DIR/{lock_path}\"" in source
         assert "flock -n" in source
         assert "PYTHONUNBUFFERED=1" in source or " -u " in source
+        assert "PYTHONPATH=\"$ROOT_DIR" in source
         assert f"tee -a \"$ROOT_DIR/{log_path}\"" in source
         assert "existing_pids" in source
 

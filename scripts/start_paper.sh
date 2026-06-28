@@ -27,7 +27,7 @@ fi
 
 run_loop() {
   echo "Starting paper loop; appending logs to logs/trading_bot.log"
-  PYTHONUNBUFFERED=1 "$PYTHON_BIN" scripts/run_paper.py 2>&1 | tee -a "$ROOT_DIR/logs/trading_bot.log"
+  PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1 "$PYTHON_BIN" scripts/run_paper.py 2>&1 | tee -a "$ROOT_DIR/logs/trading_bot.log"
 }
 
 if command -v flock >/dev/null 2>&1; then
