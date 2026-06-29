@@ -6,6 +6,12 @@ WEB_PORT="${1:-8011}"
 
 cd "$ROOT_DIR"
 
+if ! [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || (( WEB_PORT < 1 || WEB_PORT > 65535 )); then
+  echo "Invalid Web Admin port: $WEB_PORT" >&2
+  echo "Usage: ./scripts/start_local_all.sh [1-65535]" >&2
+  exit 1
+fi
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This one-click launcher currently supports macOS Terminal windows only." >&2
   echo "Please start the services separately:" >&2
@@ -28,6 +34,11 @@ quote_for_applescript() {
   printf '%s' "$value"
 }
 
+quote_for_shell() {
+  # Terminal 执行的是 shell 命令，路径和端口先做 shell 层转义再交给 AppleScript。
+  printf '%q' "$1"
+}
+
 open_terminal_window() {
   local title="$1"
   local command="$2"
@@ -43,11 +54,14 @@ end tell
 APPLESCRIPT
 }
 
-open_terminal_window "Trading Bot Web Admin" "cd \"$ROOT_DIR\" && ./scripts/start_web.sh \"$WEB_PORT\""
-open_terminal_window "Trading Bot Alert Radar" "cd \"$ROOT_DIR\" && ./scripts/start_radar_loop.sh"
-open_terminal_window "Trading Bot Paper Loop" "cd \"$ROOT_DIR\" && ./scripts/start_paper.sh"
+ROOT_DIR_Q="$(quote_for_shell "$ROOT_DIR")"
+WEB_PORT_Q="$(quote_for_shell "$WEB_PORT")"
 
-echo "Started local Trading Bot windows:"
+open_terminal_window "Trading Bot Web Admin" "cd $ROOT_DIR_Q && ./scripts/start_web.sh $WEB_PORT_Q"
+open_terminal_window "Trading Bot Alert Radar" "cd $ROOT_DIR_Q && ./scripts/start_radar_loop.sh"
+open_terminal_window "Trading Bot Paper Loop" "cd $ROOT_DIR_Q && ./scripts/start_paper.sh"
+
+echo "Opened local Trading Bot windows. Check each Terminal window for startup status:"
 echo "  Web Admin: ./scripts/start_web.sh ${WEB_PORT}"
 echo "  Alert Radar: ./scripts/start_radar_loop.sh"
 echo "  Paper Loop: ./scripts/start_paper.sh"

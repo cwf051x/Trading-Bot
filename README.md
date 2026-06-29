@@ -212,6 +212,8 @@ python scripts/run_alert_radar_once.py
 
 该脚本只负责在 macOS Terminal 中分别打开三个窗口并调用 `start_web.sh`、`start_radar_loop.sh` 和 `start_paper.sh`；原先三个启动脚本仍可单独使用。
 
+注意：该命令会启动 paper 模拟盘 loop，会写入本地 SQLite/日志并访问 Binance 行情 API；如果 Docker、screen 或其他本地 loop 已经在运行，不要重复启动。
+
 本地检查 Telegram 格式，不访问 Binance、不下单：
 
 ```bash
