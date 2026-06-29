@@ -198,6 +198,20 @@ python scripts/run_alert_radar_once.py
 
 如果 Docker 服务、screen 会话或其他同类 loop 已经在运行，不要再手动启动本地脚本，避免重复 writer 同时写入模拟盘或日志文件。
 
+本地一键启动 Web Admin、行情雷达和模拟盘三个窗口：
+
+```bash
+./scripts/start_local_all.sh
+```
+
+如需指定 Web Admin 端口：
+
+```bash
+./scripts/start_local_all.sh 8010
+```
+
+该脚本只负责在 macOS Terminal 中分别打开三个窗口并调用 `start_web.sh`、`start_radar_loop.sh` 和 `start_paper.sh`；原先三个启动脚本仍可单独使用。
+
 本地检查 Telegram 格式，不访问 Binance、不下单：
 
 ```bash
