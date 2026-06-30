@@ -107,15 +107,19 @@ def test_create_open_order_position_skips_existing_open_position_atomically(tmp_
 def test_initialize_repairs_open_orders_for_closed_positions(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "paper.sqlite")
     storage.initialize()
-    order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "test", 1)
-    position_id = storage.create_position(order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
-    storage.close_position(position_id, 104, 8, "take_profit", 2)
+    closed_order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "closed legacy", 1)
+    closed_position_id = storage.create_position(closed_order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
+    open_order_id = storage.create_order("BTC/USDT:USDT", "long", 1, 100, 98, 104, "open", "still open", 1)
+    storage.create_position(open_order_id, "BTC/USDT:USDT", "long", 1, 100, 98, 104, 1)
+    storage.close_position(closed_position_id, 104, 8, "take_profit", 2)
     with storage.connect() as connection:
-        connection.execute("UPDATE orders SET status = 'open' WHERE id = ?", (order_id,))
+        connection.execute("UPDATE orders SET status = 'open' WHERE id = ?", (closed_order_id,))
 
     storage.initialize()
 
-    assert storage.get_orders()[0]["status"] == "closed"
+    orders_by_id = {int(order["id"]): order for order in storage.get_orders()}
+    assert orders_by_id[closed_order_id]["status"] == "closed"
+    assert orders_by_id[open_order_id]["status"] == "open"
 
 
 def test_initialize_reports_duplicate_open_positions_before_unique_index(tmp_path: Path) -> None:
