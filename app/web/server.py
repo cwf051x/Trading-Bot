@@ -18,11 +18,11 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from app.alerts.display import display_alert_type, display_reason_cn, display_symbol
 from app.alerts.replay import ReplayConfig, ReplayOutcome, replay_symbol
 from app.alerts.rule_config import load_radar_rule_config
 from app.backtest.engine import BacktestEngine
 from app.config import Settings
-from app.data.symbol_universe import symbol_base
 from app.exchange.binance import BinanceFuturesClient
 from app.storage.sqlite import SQLiteStorage
 from app.strategies.momentum_oi import MomentumOIStrategy
@@ -93,31 +93,12 @@ templates.env.filters["percent"] = format_percent
 templates.env.filters["compact_number"] = format_compact_number
 templates.env.filters["compact_price"] = format_compact_price
 
-ALERT_TYPE_LABELS = {
-    "TOP_GAINER_MOMENTUM": "涨幅榜强势",
-    "SHORT_TERM_SURGE": "短周期异动",
-    "MULTI_TIMEFRAME_BREAKOUT": "多周期突破",
-    "STRONG_PULLBACK_WATCH": "强势回调观察",
-    "PULLBACK_SECOND_LEG": "回调二启",
-    "HIGH_RISK_EXTENSION": "高位风险延伸",
-    "VOLUME_PRICE_OI_RESONANCE": "量价OI共振",
-    "HOURLY_TREND_T1": "小时趋势启动",
-    "HOURLY_TREND_T2": "小时趋势加速",
-    "HOURLY_TREND_T3": "小时回踩接多",
-    "HOURLY_TREND_T4": "小时过热风险",
-    "PUMP_PULLBACK_P1": "首波健康回调",
-    "PUMP_PULLBACK_P2": "二波启动预警",
-    "PUMP_PULLBACK_P3": "二波确认突破",
-    "PUMP_PULLBACK_P4": "二波失败风险",
-}
-
-
 def display_symbol_base(symbol: str) -> str:
     """Return compact base asset text for web tables.
     返回表格使用的精简币名。
     """
 
-    return symbol_base(symbol)
+    return display_symbol(symbol)
 
 
 def alert_type_label(alert_type: str) -> str:
@@ -125,7 +106,7 @@ def alert_type_label(alert_type: str) -> str:
     将入库的提醒类型翻译成中文运营文案。
     """
 
-    return ALERT_TYPE_LABELS.get(alert_type, alert_type)
+    return display_alert_type(alert_type)
 
 
 def chinese_reason_text(reason: str) -> str:
@@ -133,15 +114,7 @@ def chinese_reason_text(reason: str) -> str:
     只展示双语提醒理由中的中文部分。
     """
 
-    parts = []
-    for item in reason.split(";"):
-        text = item.strip()
-        if not text:
-            continue
-        if "/" in text:
-            text = text.rsplit("/", 1)[-1].strip()
-        parts.append(text)
-    return "；".join(parts)
+    return display_reason_cn(reason)
 
 
 templates.env.filters["symbol_base"] = display_symbol_base
@@ -585,7 +558,7 @@ def create_app() -> FastAPI:
                 rows=rows,
                 table=state,
                 alert_filter=alert_filter,
-                title="Market Alerts",
+                title="行情雷达提醒",
             ),
         )
 

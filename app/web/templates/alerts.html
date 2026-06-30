@@ -2,17 +2,17 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>Market Alerts</h1>
-    <p class="lead">Recent radar signals, Telegram delivery status, and suggested action. Signals are alerts only, not trading instructions.</p>
+    <h1>行情雷达提醒</h1>
+    <p class="lead">最近雷达信号、Telegram 发送状态和建议动作。信号仅用于行情提醒，不是交易指令。</p>
   </div>
   <div class="topbar-status">
-    <a class="button secondary" href="/alerts">Only Resonance</a>
-    <a class="button secondary" href="/alerts?type=HOURLY_TREND_T3">Hourly T3</a>
-    <a class="button secondary" href="/alerts?type=PUMP_PULLBACK_P2">P2</a>
-    <a class="button secondary" href="/alerts?type=PUMP_PULLBACK_P3">P3</a>
-    <a class="button secondary" href="/alerts?type=HOURLY_TREND_T4">Hourly Risk</a>
-    <a class="button secondary" href="/alerts?type=all">All Alerts</a>
-    <span class="badge ok">No Live Orders</span>
+    <a class="button secondary" href="/alerts">量价OI</a>
+    <a class="button secondary" href="/alerts?type=HOURLY_TREND_T3">小时T3</a>
+    <a class="button secondary" href="/alerts?type=PUMP_PULLBACK_P2">二波P2</a>
+    <a class="button secondary" href="/alerts?type=PUMP_PULLBACK_P3">二波P3</a>
+    <a class="button secondary" href="/alerts?type=HOURLY_TREND_T4">小时风险</a>
+    <a class="button secondary" href="/alerts?type=all">全部提醒</a>
+    <span class="badge ok">未开启真实交易</span>
   </div>
 </div>
 
@@ -33,14 +33,14 @@
     </colgroup>
     <thead>
       <tr>
-        <th><a class="sort-link" href="{{ table.sort_url('timestamp') }}">Time</a></th>
-        <th><a class="sort-link" href="{{ table.sort_url('symbol') }}">Symbol</a></th>
-        <th><a class="sort-link" href="{{ table.sort_url('alert_type') }}">Signal</a></th>
-        <th><a class="sort-link" href="{{ table.sort_url('score') }}">Score</a></th>
-        <th><a class="sort-link" href="{{ table.sort_url('price') }}">Price</a></th>
-        <th>Change</th>
-        <th><a class="sort-link" href="{{ table.sort_url('volume_ratio') }}">Market</a></th>
-        <th>Detail</th>
+        <th><a class="sort-link" href="{{ table.sort_url('timestamp') }}">时间</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('symbol') }}">币种</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('alert_type') }}">信号</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('score') }}">分数</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('price') }}">价格</a></th>
+        <th>涨幅</th>
+        <th><a class="sort-link" href="{{ table.sort_url('volume_ratio') }}">市场</a></th>
+        <th>详情</th>
       </tr>
     </thead>
     <tbody>
@@ -53,7 +53,7 @@
             <div class="cell-main">{{ row.alert_type | alert_type_label }}</div>
             <div class="cell-row">
               <span class="badge {% if row.level == 'A' %}danger{% elif row.level == 'B' %}warn{% else %}ok{% endif %}">{{ row.level }}</span>
-              {% if row.sent_to_telegram %}<span class="ok">sent</span>{% else %}<span class="meta">stored</span>{% endif %}
+              {% if row.sent_to_telegram %}<span class="ok">已推送</span>{% else %}<span class="meta">仅记录</span>{% endif %}
             </div>
           </div>
         </td>
@@ -83,6 +83,6 @@
 </div>
 {% include "partials/pagination.html" %}
 {% else %}
-  <div class="empty">No radar alerts recorded yet.</div>
+  <div class="empty">暂无雷达提醒记录。</div>
 {% endif %}
 {% endblock %}

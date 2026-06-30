@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from app.alerts.display import display_alert_type, display_signal_code, display_symbol
 from app.alerts.telegram_formatter import format_pct, format_price
 from app.storage.sqlite import SQLiteStorage
 
@@ -181,7 +182,7 @@ def _build_digest_item(symbol: str, rows: list[dict[str, Any]], *, now_ms: int, 
         digest_score -= 15
     return {
         "symbol": symbol,
-        "short_symbol": _short_symbol(symbol),
+        "short_symbol": display_symbol(symbol),
         "start_price": start_price,
         "latest_price": latest_price,
         "window_change": window_change,
@@ -230,8 +231,14 @@ def _format_digest_text(items: list[dict[str, Any]], since_ms: int, now_ms: int,
 def _format_signal_text(rows: list[dict[str, Any]]) -> str:
     family_order: list[str] = []
     family_stages: dict[str, list[str]] = {}
+    other_labels: list[str] = []
     for row in rows:
         family, stage = _family_and_stage(row)
+        if family == "other":
+            label = display_alert_type(str(row.get("alert_type") or ""))
+            if label not in other_labels:
+                other_labels.append(label)
+            continue
         if family not in family_stages:
             family_order.append(family)
             family_stages[family] = []
@@ -242,6 +249,7 @@ def _format_signal_text(rows: list[dict[str, Any]]) -> str:
     for family in family_order:
         label = {"volume_price_oi": "量价OI", "hourly_trend": "小时趋势", "pump_pullback_second_wave": "二波"}.get(family, "其他")
         parts.append(f"{label} {_compress_stages(family_stages[family])}")
+    parts.extend(other_labels)
     return "；".join(parts)
 
 
@@ -269,7 +277,7 @@ def _family_and_stage(row: dict[str, Any]) -> tuple[str, str]:
             family = "volume_price_oi"
         else:
             family = "other"
-    stage = str(metadata.get("signal_stage") or metadata.get("resonance_level") or metadata.get("trend_level") or metadata.get("pump_pullback_level") or alert_type.rsplit("_", 1)[-1])
+    stage = str(metadata.get("signal_stage") or metadata.get("resonance_level") or metadata.get("trend_level") or metadata.get("pump_pullback_level") or display_signal_code(alert_type))
     return family, stage
 
 
@@ -329,10 +337,6 @@ def _upgrade_bonus(rows: list[dict[str, Any]]) -> int:
     stage_rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "T1": 1, "T2": 2, "T3": 3, "T4": 4, "P1": 1, "P2": 2, "P3": 3, "P4": 4}
     ranks = [stage_rank.get(_family_and_stage(row)[1], 0) for row in rows]
     return 8 if ranks and max(ranks) > min(ranks) else 0
-
-
-def _short_symbol(symbol: str) -> str:
-    return symbol.split("/", 1)[0]
 
 
 def _format_hhmm(timestamp_ms: int) -> str:

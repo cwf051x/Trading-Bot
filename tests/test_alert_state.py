@@ -141,7 +141,8 @@ def test_alert_metadata_bypasses_cooldown_for_p4_failure(tmp_path: Path) -> None
 def test_telegram_alert_formatter_contains_risk_warning() -> None:
     message = format_alert_message(make_alert())
 
-    assert "A级信号" in message
-    assert "ALLO/USDT:USDT" in message
+    assert message.splitlines()[0] == "ALLO｜A级｜P2｜0.184200｜+9.50%"
+    assert "ALLO/USDT:USDT" not in message.splitlines()[0]
+    assert "回调二启" in message
     assert "风险提示" in message
     assert "不是交易指令" in message

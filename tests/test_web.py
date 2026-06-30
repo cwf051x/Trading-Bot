@@ -80,7 +80,7 @@ def test_alerts_page_renders(monkeypatch, tmp_path: Path) -> None:
     response = client.get("/alerts")
 
     assert response.status_code == 200
-    assert "Market Alerts" in response.text
+    assert "行情雷达提醒" in response.text
 
 
 def test_alerts_page_uses_compact_chinese_table_display(monkeypatch, tmp_path: Path) -> None:
@@ -122,11 +122,11 @@ def test_alerts_page_uses_compact_chinese_table_display(monkeypatch, tmp_path: P
     assert "BTC/USDT:USDT" not in table_body
     assert "TOP_GAINER_MOMENTUM" not in table_body
     assert "24h gainer rank top 10" not in table_body
-    assert response.text.index(">Time</a>") < response.text.index(">Symbol</a>")
-    assert ">Signal</a>" in response.text
-    assert "<th>Change</th>" in response.text
-    assert ">Market</a>" in response.text
-    assert "<th>Detail</th>" in response.text
+    assert response.text.index(">时间</a>") < response.text.index(">币种</a>")
+    assert ">信号</a>" in response.text
+    assert "<th>涨幅</th>" in response.text
+    assert ">市场</a>" in response.text
+    assert "<th>详情</th>" in response.text
     assert "<th>15m</th>" not in response.text
     assert "<th>Telegram</th>" not in response.text
 
