@@ -74,6 +74,39 @@ def test_format_alert_message_first_line_is_mobile_summary() -> None:
     assert "价格突破前12小时高点" in message
 
 
+def test_format_alert_message_keeps_readable_body_after_summary() -> None:
+    alert = AlertSignal(
+        timestamp=1,
+        symbol="NFP/USDT:USDT",
+        alert_type=AlertType.VOLUME_PRICE_OI_RESONANCE,
+        level=AlertLevel.B,
+        score=70,
+        price=0.004495,
+        price_change_3m=0.0,
+        price_change_5m=0.0883,
+        price_change_15m=0.0728,
+        price_change_1h=0.0584,
+        price_change_24h=-0.2269,
+        volume_ratio=29.41,
+        btc_15m_change=0.0,
+        reasons=[
+            "L1 unusual move watch / L1 异动观察",
+            "price, volume and OI expanded together / 价格、成交量、持仓量同步扩张",
+        ],
+        suggested_action="L1 异动观察，等待是否升级为主升确认",
+        raw={"metadata": {"signal_stage": "L1"}},
+    )
+
+    message = format_alert_message(alert)
+    lines = message.splitlines()
+
+    assert lines[0] == "NFP｜B级｜L1｜0.004495｜+5.84%"
+    assert lines[1] == "--------------------"
+    assert "⚠️ B级信号：量价OI共振拉升\n\n币种：NFP\n现价：0.004495\n评分：70/100\n建议：L1 异动观察，等待是否升级为主升确认" in message
+    assert "/ Volume Price OI Resonance" not in message
+    assert "NFP/USDT:USDT" not in message
+
+
 def test_format_alert_message_missing_one_hour_change_uses_dash() -> None:
     alert = AlertSignal(
         timestamp=1,

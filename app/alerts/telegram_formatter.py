@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 from app.alerts.display import display_alert_type, display_reasons_cn, display_signal_code, display_symbol, metadata_from_raw
-from app.alerts.signal_models import AlertSignal
+from app.alerts.signal_models import AlertLevel, AlertSignal
+
+
+SUMMARY_SEPARATOR = "--------------------"
 
 
 def format_pct(value: float | None) -> str:
@@ -47,10 +50,14 @@ def format_alert_message(alert: AlertSignal) -> str:
             format_pct(alert.price_change_1h),
         ]
     )
+    prefix = "🚨" if alert.level == AlertLevel.A else "⚠️" if alert.level == AlertLevel.B else "👀"
     reasons = "\n".join(f"- {reason}" for reason in display_reasons_cn(alert.reasons, limit=5)) or "-"
     return (
-        f"{first_line}\n\n"
-        f"{display_alert_type(alert.alert_type)}\n\n"
+        f"{first_line}\n"
+        f"{SUMMARY_SEPARATOR}\n"
+        f"{prefix} {alert.level.value}级信号：{display_alert_type(alert.alert_type)}\n\n"
+        f"币种：{display_symbol(alert.symbol)}\n"
+        f"现价：{format_price(alert.price)}\n"
         f"评分：{alert.score}/100\n"
         f"建议：{alert.suggested_action}\n\n"
         f"短线表现：\n"
