@@ -101,6 +101,7 @@ class SQLiteStorage:
                 WHERE status = 'open'
                 """
             )
+            self._repair_order_statuses_for_closed_positions(connection)
 
             connection.execute(
                 """
@@ -174,6 +175,24 @@ class SQLiteStorage:
         raise ValueError(
             "duplicate open positions detected before creating idx_positions_one_open_symbol_side: "
             f"{details}. Close or mark duplicate rows manually before starting the service."
+        )
+
+    def _repair_order_statuses_for_closed_positions(self, connection: sqlite3.Connection) -> None:
+        """Reconcile legacy orders whose positions were already closed.
+        启动时修正旧库中持仓已平但订单仍显示 open 的历史数据，避免后台列表误导排障。
+        """
+
+        connection.execute(
+            """
+            UPDATE orders
+            SET status = 'closed'
+            WHERE status = 'open'
+              AND id IN (
+                  SELECT order_id
+                  FROM positions
+                  WHERE status = 'closed'
+              )
+            """
         )
 
     def create_order(
@@ -436,6 +455,14 @@ class SQLiteStorage:
                 WHERE id = ? AND status = 'open'
                 """,
                 (exit_price, pnl, exit_reason, timestamp, position_id),
+            )
+            connection.execute(
+                """
+                UPDATE orders
+                SET status = 'closed'
+                WHERE id = ?
+                """,
+                (row["order_id"],),
             )
             connection.execute(
                 """

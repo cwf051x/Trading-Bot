@@ -59,6 +59,20 @@ def test_close_position_is_idempotent_and_does_not_duplicate_trade(tmp_path: Pat
     assert positions[0]["closed_at"] == 2
 
 
+def test_close_position_marks_order_closed(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "test", 1)
+    position_id = storage.create_position(order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
+
+    closed = storage.close_position(position_id, 104, 8, "take_profit", 2)
+
+    orders = storage.get_orders()
+    assert closed is True
+    assert orders[0]["id"] == order_id
+    assert orders[0]["status"] == "closed"
+
+
 def test_create_open_order_position_skips_existing_open_position_atomically(tmp_path: Path) -> None:
     storage = SQLiteStorage(tmp_path / "paper.sqlite")
     storage.initialize()
@@ -88,6 +102,20 @@ def test_create_open_order_position_skips_existing_open_position_atomically(tmp_
     assert second is None
     assert len(storage.get_orders()) == 1
     assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
+
+
+def test_initialize_repairs_open_orders_for_closed_positions(tmp_path: Path) -> None:
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    order_id = storage.create_order("ETH/USDT:USDT", "long", 2, 100, 98, 104, "open", "test", 1)
+    position_id = storage.create_position(order_id, "ETH/USDT:USDT", "long", 2, 100, 98, 104, 1)
+    storage.close_position(position_id, 104, 8, "take_profit", 2)
+    with storage.connect() as connection:
+        connection.execute("UPDATE orders SET status = 'open' WHERE id = ?", (order_id,))
+
+    storage.initialize()
+
+    assert storage.get_orders()[0]["status"] == "closed"
 
 
 def test_initialize_reports_duplicate_open_positions_before_unique_index(tmp_path: Path) -> None:

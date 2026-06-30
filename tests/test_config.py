@@ -45,6 +45,7 @@ def test_settings_defaults(monkeypatch) -> None:
         "RISK_MAX_SYMBOL_POSITION_PCT",
         "RISK_PER_TRADE_PCT",
         "RISK_MAX_CONSECUTIVE_LOSSES",
+        "RISK_LOSS_COOLDOWN_SECONDS",
         "STRATEGY_BREAKOUT_WINDOW",
         "STRATEGY_VOLUME_WINDOW",
         "STRATEGY_VOLUME_MULTIPLIER",
@@ -142,6 +143,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.risk_max_symbol_position_pct == 0.10
     assert settings.risk_per_trade_pct == 0.01
     assert settings.risk_max_consecutive_losses == 3
+    assert settings.risk_loss_cooldown_seconds == 3600
     assert settings.strategy_breakout_window == 20
     assert settings.strategy_volume_multiplier == 1.5
     assert settings.web_host == "127.0.0.1"
