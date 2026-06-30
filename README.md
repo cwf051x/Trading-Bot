@@ -60,6 +60,15 @@ POLL_INTERVAL_SECONDS=60
 PAPER_ERROR_NOTIFY_CONSECUTIVE_FAILURES=3
 KLINE_LIMIT=120
 PAPER_LEVERAGE=1
+PAPER_FEE_RATE=0
+PAPER_SLIPPAGE_PCT=0
+PAPER_FUNDING_RATE=0
+RISK_MAX_TOTAL_EXPOSURE_PCT=0.50
+RISK_MAX_OPEN_POSITIONS=5
+RISK_MAX_SYMBOL_POSITION_PCT=0.10
+RISK_PER_TRADE_PCT=0.01
+RISK_MAX_CONSECUTIVE_LOSSES=3
+RISK_LOSS_COOLDOWN_SECONDS=3600
 STRATEGY_BREAKOUT_WINDOW=20
 STRATEGY_VOLUME_WINDOW=20
 STRATEGY_VOLUME_MULTIPLIER=1.5
@@ -108,6 +117,8 @@ ALERT_FUNDING_RATE_TTL_SECONDS=900
 `EXCHANGE_REQUEST_RETRIES` 和 `EXCHANGE_RETRY_DELAY_SECONDS` 用于处理 Binance 偶发 K 线/ticker/OI 请求抖动。生产建议保留 `2` 次短重试，避免单次 `klines` 请求失败导致整轮 paper cycle 报错。
 
 `PAPER_ERROR_NOTIFY_CONSECUTIVE_FAILURES` 控制 paper cycle 错误通知阈值。默认连续失败 3 次才推送 Telegram；单次 Binance 请求抖动只写日志，避免误报刷屏。
+
+`RISK_MAX_CONSECUTIVE_LOSSES` 控制连续亏损达到多少笔后暂停新开仓；`RISK_LOSS_COOLDOWN_SECONDS` 控制暂停时长，默认 3600 秒。设置为 `0` 时会保留旧行为：连续亏损状态会一直阻断新开仓，直到最近平仓记录被盈利交易打断。
 
 `ALERT_AUTO_PAPER_TRADING_ENABLED` 默认是 `false`，行情雷达只提醒、不自动建立模拟仓。只有明确要观察雷达信号自动下单表现时才开启；开启后必须确保只有一个 writer 服务负责写 paper orders，避免 `trading-bot` 和 `alert-radar` 重复建仓。雷达规则阈值以 `config/radar_rules.yaml` 为准，旧的 `ALERT_HOURLY_*` 环境变量不再作为真实规则来源。
 

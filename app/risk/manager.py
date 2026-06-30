@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Any
 
 from app.exchange.binance import Kline
@@ -37,6 +38,7 @@ class RiskManager:
         max_total_exposure_pct: float = 0.50,
         max_open_positions: int = 5,
         max_consecutive_losses: int = 3,
+        loss_cooldown_seconds: int = 3600,
         btc_drop_threshold_15m: float = 0.03,
         storage: SQLiteStorage | None = None,
         fee_rate: float = 0.0,
@@ -49,6 +51,7 @@ class RiskManager:
         self.max_total_exposure_pct = max_total_exposure_pct
         self.max_open_positions = max_open_positions
         self.max_consecutive_losses = max_consecutive_losses
+        self.loss_cooldown_seconds = max(int(loss_cooldown_seconds), 0)
         self.btc_drop_threshold_15m = btc_drop_threshold_15m
         self.storage = storage
         self.fee_rate = max(float(fee_rate), 0.0)
@@ -64,7 +67,7 @@ class RiskManager:
         if not signal.is_actionable:
             return RiskDecision(False, "signal is not actionable")
         account_state = self._account_state(market_context or {})
-        if self._consecutive_losses_from_storage() >= self.max_consecutive_losses:
+        if self._loss_cooldown_active(signal.timestamp):
             return RiskDecision(False, "cooldown active after consecutive losses")
         if signal.stop_loss is None:
             return RiskDecision(False, "signal has no stop_loss")
@@ -170,3 +173,29 @@ class RiskManager:
                 continue
             break
         return losses
+
+    def _loss_cooldown_active(self, current_timestamp: int | None = None) -> bool:
+        """Return whether recent consecutive losses should temporarily block entries.
+        连续亏损只在冷却窗口内阻断开仓，避免无人为干预时永久自锁。
+        """
+
+        if self.storage is None:
+            return self.consecutive_losses >= self.max_consecutive_losses
+        recent_trades = self.storage.get_recent_closed_trades(limit=max(self.max_consecutive_losses, 1))
+        losses = 0
+        latest_loss_closed_at: int | None = None
+        for trade in recent_trades:
+            if float(trade["pnl"]) >= 0:
+                break
+            losses += 1
+            if latest_loss_closed_at is None:
+                latest_loss_closed_at = int(trade["closed_at"])
+        if losses < self.max_consecutive_losses:
+            return False
+        if self.loss_cooldown_seconds <= 0:
+            return True
+        now_ms = int(current_timestamp) if current_timestamp is not None else int(time.time() * 1000)
+        if now_ms <= 0:
+            now_ms = int(time.time() * 1000)
+        latest_ms = latest_loss_closed_at or now_ms
+        return now_ms - latest_ms < self.loss_cooldown_seconds * 1000

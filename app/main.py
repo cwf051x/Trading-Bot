@@ -130,6 +130,7 @@ def run() -> None:
         max_total_exposure_pct=getattr(settings, "risk_max_total_exposure_pct", 0.50),
         max_open_positions=getattr(settings, "risk_max_open_positions", 5),
         max_consecutive_losses=getattr(settings, "risk_max_consecutive_losses", 3),
+        loss_cooldown_seconds=getattr(settings, "risk_loss_cooldown_seconds", 3600),
         btc_drop_threshold_15m=settings.btc_drop_threshold_15m,
         storage=storage,
         fee_rate=getattr(settings, "paper_fee_rate", 0.0),

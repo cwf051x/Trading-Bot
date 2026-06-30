@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     risk_max_symbol_position_pct: float = Field(default=0.10, alias="RISK_MAX_SYMBOL_POSITION_PCT")
     risk_per_trade_pct: float = Field(default=0.01, alias="RISK_PER_TRADE_PCT")
     risk_max_consecutive_losses: int = Field(default=3, alias="RISK_MAX_CONSECUTIVE_LOSSES")
+    risk_loss_cooldown_seconds: int = Field(default=3600, alias="RISK_LOSS_COOLDOWN_SECONDS")
     strategy_breakout_window: int = Field(default=20, alias="STRATEGY_BREAKOUT_WINDOW")
     strategy_volume_window: int = Field(default=20, alias="STRATEGY_VOLUME_WINDOW")
     strategy_volume_multiplier: float = Field(default=1.5, alias="STRATEGY_VOLUME_MULTIPLIER")

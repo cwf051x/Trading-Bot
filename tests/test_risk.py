@@ -111,6 +111,52 @@ def test_risk_cooldown_reads_recent_closed_trades(tmp_path) -> None:
     assert "cooldown" in decision.reason
 
 
+def test_risk_allows_entries_after_loss_cooldown_expires(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    for index in range(3):
+        order_id = storage.create_order(f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, "open", "loss", index)
+        position_id = storage.create_position(order_id, f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, index)
+        storage.close_position(position_id, 95, -5, "stop_loss", index + 10)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_consecutive_losses=3, loss_cooldown_seconds=60)
+
+    decision = manager.evaluate(Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 110.0, "test", 80_000))
+
+    assert decision.allowed is True
+
+
+def test_risk_blocks_entries_during_loss_cooldown_window(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    latest_closed_at = 1_000_000
+    for index, closed_at in enumerate([latest_closed_at - 20_000, latest_closed_at - 10_000, latest_closed_at]):
+        order_id = storage.create_order(f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, "open", "loss", closed_at - 1_000)
+        position_id = storage.create_position(order_id, f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, closed_at - 1_000)
+        storage.close_position(position_id, 95, -5, "stop_loss", closed_at)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_consecutive_losses=3, loss_cooldown_seconds=60)
+
+    decision = manager.evaluate(Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 110.0, "test", latest_closed_at + 30_000))
+
+    assert decision.allowed is False
+    assert "cooldown" in decision.reason
+
+
+def test_risk_zero_loss_cooldown_keeps_legacy_block_until_win(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "risk.sqlite")
+    storage.initialize()
+    latest_closed_at = 1_000_000
+    for index, closed_at in enumerate([latest_closed_at - 20_000, latest_closed_at - 10_000, latest_closed_at]):
+        order_id = storage.create_order(f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, "open", "loss", closed_at - 1_000)
+        position_id = storage.create_position(order_id, f"LOSS{index}/USDT:USDT", "long", 1, 100, 95, 110, closed_at - 1_000)
+        storage.close_position(position_id, 95, -5, "stop_loss", closed_at)
+    manager = RiskManager(account_equity=10_000, storage=storage, max_consecutive_losses=3, loss_cooldown_seconds=0)
+
+    decision = manager.evaluate(Signal("ETH/USDT:USDT", "long", 0.8, 100.0, 98.0, 110.0, "test", latest_closed_at + 3_600_000))
+
+    assert decision.allowed is False
+    assert "cooldown" in decision.reason
+
+
 def test_risk_uses_current_prices_for_existing_position_exposure(tmp_path) -> None:
     storage = SQLiteStorage(tmp_path / "risk.sqlite")
     storage.initialize()
