@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>分钟单边上涨池</h1>
+    <p class="lead">Minute Runner Radar 当前池状态。这里只展示行情预警状态，不代表自动交易指令。</p>
+  </div>
+</div>
+
+{% if rows %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>币种</th>
+        <th>状态</th>
+        <th>分数</th>
+        <th>价格</th>
+        <th>1h涨幅</th>
+        <th>趋势</th>
+        <th>OI</th>
+        <th>量能</th>
+        <th>MA25距离</th>
+        <th>回撤</th>
+        <th>邮件</th>
+        <th>风险</th>
+        <th>更新</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><strong>{{ row.symbol|symbol_base }}</strong></td>
+        <td>
+          {% if row.state == "M2E" %}
+          <span class="badge ok">M2E 早期确信</span>
+          {% elif row.state == "M2M" %}
+          <span class="badge ok">M2M 成熟</span>
+          {% elif row.state == "M3" %}
+          <span class="badge warn">M3 过热</span>
+          {% elif row.state == "M4" %}
+          <span class="badge danger">M4 破位</span>
+          {% elif row.state == "M1" %}
+          <span class="badge">M1 单边池</span>
+          {% else %}
+          <span class="badge">M0 启动</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="cell-stack">
+            <span class="cell-main">{{ row.runner_score|compact_number(1) }}</span>
+            <span class="cell-row">Rank {{ row.ranking_score|compact_number(1) }}</span>
+          </div>
+        </td>
+        <td>{{ row.last_price|compact_price }}</td>
+        <td>{{ row.price_change_1h|percent }}</td>
+        <td>{{ row.trend_age_minutes }}m</td>
+        <td>
+          <div class="cell-stack">
+            <span class="cell-row">30m {{ row.oi_change_30m|percent }}</span>
+            <span class="cell-row">1h {{ row.oi_change_1h|percent }}</span>
+          </div>
+        </td>
+        <td>{{ row.volume_ratio_15m|compact_number(2) }}x</td>
+        <td>{{ row.distance_to_ma25_5m|percent }}</td>
+        <td>{{ row.pullback_from_high|percent }}</td>
+        <td>
+          {% if row.email_sent_for_trend_id %}
+          <span class="badge ok">已发</span>
+          {% elif row.email_skip_reason %}
+          <span class="badge warn">{{ row.email_skip_reason }}</span>
+          {% else %}
+          <span class="badge">未发</span>
+          {% endif %}
+        </td>
+        <td class="reason">
+          {% if row.risk_tags_json %}
+          {{ row.risk_tags_json|join(" / ") }}
+          {% else %}
+          -
+          {% endif %}
+        </td>
+        <td>{{ row.last_score_update_at|datetime_ms }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">暂无单边上涨池状态。</div>
+{% endif %}
+{% endblock %}

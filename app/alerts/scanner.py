@@ -624,6 +624,7 @@ class MarketScanner:
         resonance_rows = [metrics for metrics in metrics_rows if getattr(metrics, "resonance", None) is not None]
         trend_rows = [metrics for metrics in metrics_rows if getattr(metrics, "trend", None) is not None]
         pump_rows = [metrics for metrics in metrics_rows if getattr(metrics, "pump_pullback", None) is not None]
+        minute_runner_rows = [metrics for metrics in metrics_rows if getattr(metrics, "minute_runner", None) is not None]
         pump_first_rows = [metrics for metrics in pump_rows if metrics.pump_pullback and metrics.pump_pullback.has_first_pump]
         volume_config = self.settings.radar_rule_config.get("volume_price_oi", {})
         l1 = volume_config.get("l1", {})
@@ -646,6 +647,9 @@ class MarketScanner:
             diagnostic_pump_stats=len(pump_rows),
             diagnostic_pump_has_first_pump=len(pump_first_rows),
             diagnostic_pump_healthy_pullback=sum(1 for metrics in pump_first_rows if self._is_diagnostic_healthy_pullback(metrics.pump_pullback, pullback)),
+            diagnostic_minute_runner_stats=len(minute_runner_rows),
+            diagnostic_minute_runner_pool=sum(1 for metrics in minute_runner_rows if metrics.minute_runner and metrics.minute_runner.state in {"M1", "M2E", "M2M"}),
+            diagnostic_minute_runner_overheat=sum(1 for metrics in minute_runner_rows if metrics.minute_runner and metrics.minute_runner.state == "M3"),
         )
 
     @staticmethod

@@ -9,6 +9,7 @@ from typing import Any
 from app.alerts.rule_config import load_radar_rule_config
 from app.alerts.rules.base import AlertRule
 from app.alerts.rules.hourly_trend import HourlyTrendRule
+from app.alerts.rules.minute_runner import MinuteRunnerRule
 from app.alerts.rules.pump_pullback_second_wave import PumpPullbackSecondWaveRule
 from app.alerts.rules.volume_price_oi import VolumePriceOIRule
 from app.alerts.signal_models import AlertRuleResult, MarketMetrics
@@ -27,6 +28,7 @@ class AlertRuleEngine:
             VolumePriceOIRule(settings),
             HourlyTrendRule(settings),
             PumpPullbackSecondWaveRule(settings),
+            MinuteRunnerRule(settings),
         ]
 
     def evaluate(self, metrics: MarketMetrics, state: dict[str, Any] | None = None) -> list[AlertRuleResult]:

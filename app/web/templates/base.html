@@ -578,6 +578,10 @@
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 21h3.4"></path><path d="M18 8A6 6 0 0 0 6 8c0 7-3 7-3 9h18c0-2-3-2-3-9"></path></svg>
             Alerts
           </a>
+          <a class="{% if current_path.startswith('/minute-runners') %}active{% endif %}" href="/minute-runners">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17h4l3-9 4 13 3-7h4"></path><path d="M3 5h18"></path></svg>
+            Minute Runners
+          </a>
           <a class="{% if current_path.startswith('/logs') %}active{% endif %}" href="/logs">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>
             Logs

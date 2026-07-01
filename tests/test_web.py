@@ -83,6 +83,44 @@ def test_alerts_page_renders(monkeypatch, tmp_path: Path) -> None:
     assert "行情雷达提醒" in response.text
 
 
+def test_minute_runners_page_renders_current_pool(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    storage.upsert_minute_runner_state(
+        {
+            "symbol": "IN/USDT:USDT",
+            "state": "M2E",
+            "runner_score": 89,
+            "ranking_score": 110,
+            "trend_id": "trend-1",
+            "trend_age_minutes": 85,
+            "last_score_update_at": 1_700_000_000_000,
+            "last_price": 0.123,
+            "price_change_1h": 0.28,
+            "volume_ratio_15m": 2.6,
+            "oi_change_30m": 0.052,
+            "oi_change_1h": 0.068,
+            "distance_to_ma25_5m": 0.084,
+            "pullback_from_high": 0.02,
+            "risk_tags_json": [],
+            "metadata_json": {},
+        }
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/minute-runners")
+
+    assert response.status_code == 200
+    assert "分钟单边上涨池" in response.text
+    assert "M2E 早期确信" in response.text
+    table_body = response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert ">IN</strong>" in table_body
+    assert "IN/USDT:USDT" not in table_body
+
+
 def test_alerts_page_uses_compact_chinese_table_display(monkeypatch, tmp_path: Path) -> None:
     database_path = tmp_path / "web.sqlite"
     monkeypatch.setenv("DATABASE_PATH", str(database_path))

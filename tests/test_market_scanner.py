@@ -29,6 +29,7 @@ def disable_extra_rule_fetches(settings: Settings) -> Settings:
         **DEFAULT_RADAR_RULE_CONFIG,
         "hourly_trend": {**DEFAULT_RADAR_RULE_CONFIG["hourly_trend"], "enabled": False},
         "pump_pullback_second_wave": {**DEFAULT_RADAR_RULE_CONFIG["pump_pullback_second_wave"], "enabled": False},
+        "minute_runner": {**DEFAULT_RADAR_RULE_CONFIG["minute_runner"], "enabled": False},
     }
     object.__setattr__(settings, "radar_rule_config", config)
     return settings
@@ -214,7 +215,7 @@ def test_scanner_reuses_medium_slow_and_multi_period_oi_cache_when_rules_need_th
     assert sum(client.oi_period_calls.values()) == 6
     assert {period for _, period in client.oi_period_calls} == {"5m", "15m", "1h"}
     assert sum(client.funding_calls.values()) == 2
-    assert scanner.last_profile.meta["scan_timeframes"] == "15m,1h,5m"
+    assert scanner.last_profile.meta["scan_timeframes"] == "15m,1h,3m,5m"
     assert scanner.last_profile.meta["scan_oi_periods"] == "15m,1h,5m"
     assert scanner.last_profile.meta["oi_cache_hits"] == 6
     assert scanner.last_profile.meta["funding_cache_hits"] == 2

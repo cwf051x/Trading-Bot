@@ -562,6 +562,21 @@ def create_app() -> FastAPI:
             ),
         )
 
+    @app.get("/minute-runners")
+    def minute_runners_page(request: Request, _: None = Depends(require_admin)) -> Response:
+        """Render current Minute Runner pool states.
+        展示当前分钟级单边上涨池状态。
+        """
+
+        settings = Settings()
+        storage = build_storage(settings)
+        rows = storage.list_minute_runner_states(limit=100)
+        return templates.TemplateResponse(
+            request,
+            "minute_runners.html",
+            base_context(request, settings, rows=rows, title="分钟单边上涨池"),
+        )
+
     @app.get("/logs")
     def logs_page(request: Request, _: None = Depends(require_admin)) -> Response:
         """Render local operation logs for radar and paper-trading diagnostics.
