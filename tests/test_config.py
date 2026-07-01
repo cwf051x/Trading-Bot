@@ -139,8 +139,8 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.paper_slippage_pct == 0.0
     assert settings.paper_funding_rate == 0.0
     assert settings.risk_max_total_exposure_pct == 0.50
-    assert settings.risk_max_open_positions == 5
-    assert settings.risk_max_symbol_position_pct == 0.10
+    assert settings.risk_max_open_positions == 10
+    assert settings.risk_max_symbol_position_pct == 0.05
     assert settings.risk_per_trade_pct == 0.01
     assert settings.risk_max_consecutive_losses == 3
     assert settings.risk_loss_cooldown_seconds == 3600

@@ -126,9 +126,9 @@ def run() -> None:
     risk_manager = RiskManager(
         account_equity=settings.account_equity,
         risk_per_trade_pct=getattr(settings, "risk_per_trade_pct", 0.01),
-        max_symbol_position_pct=getattr(settings, "risk_max_symbol_position_pct", 0.10),
+        max_symbol_position_pct=getattr(settings, "risk_max_symbol_position_pct", 0.05),
         max_total_exposure_pct=getattr(settings, "risk_max_total_exposure_pct", 0.50),
-        max_open_positions=getattr(settings, "risk_max_open_positions", 5),
+        max_open_positions=getattr(settings, "risk_max_open_positions", 10),
         max_consecutive_losses=getattr(settings, "risk_max_consecutive_losses", 3),
         loss_cooldown_seconds=getattr(settings, "risk_loss_cooldown_seconds", 3600),
         btc_drop_threshold_15m=settings.btc_drop_threshold_15m,
@@ -169,7 +169,8 @@ def run() -> None:
         paper_error_streak = 0
         while True:
             try:
-                run_paper_cycle(client, paper, strategy, risk_manager, notifier, settings)
+                # Paper 策略信号和风控拦截属于执行链路，和雷达提醒分流到订单通道。
+                run_paper_cycle(client, paper, strategy, risk_manager, order_notifier, settings)
                 paper_error_streak = 0
             except KeyboardInterrupt:
                 logger.info("Paper mode stopped by user")
