@@ -127,6 +127,24 @@ def test_scanner_fetches_only_enabled_rule_requirements() -> None:
     assert not client.funding_calls
 
 
+def test_minute_runner_env_disabled_removes_rule_scan_cost() -> None:
+    client = CountingMarketClient(ticker_count=6)
+    settings = Settings(
+        _env_file=None,
+        ALERT_CANDIDATE_TOP_N=3,
+        ALERT_RULE_HOURLY_TREND_ENABLED=False,
+        MINUTE_RUNNER_ENABLED=False,
+    )
+    scanner = MarketScanner(client, settings)
+
+    scan_plan = scanner._build_scan_plan()
+
+    assert "3m" not in scan_plan.timeframes
+    assert scan_plan.timeframes == {"5m", "15m", "1h"}
+    assert scan_plan.oi_periods == {"5m", "15m", "1h"}
+    assert scan_plan.requires_funding_rate is True
+
+
 def test_candidate_pool_merges_gainers_volume_and_recent_change_buckets() -> None:
     client = CountingMarketClient(ticker_count=6)
     settings = Settings(
@@ -215,7 +233,7 @@ def test_scanner_reuses_medium_slow_and_multi_period_oi_cache_when_rules_need_th
     assert sum(client.oi_period_calls.values()) == 6
     assert {period for _, period in client.oi_period_calls} == {"5m", "15m", "1h"}
     assert sum(client.funding_calls.values()) == 2
-    assert scanner.last_profile.meta["scan_timeframes"] == "15m,1h,3m,5m"
+    assert scanner.last_profile.meta["scan_timeframes"] == "15m,1h,5m"
     assert scanner.last_profile.meta["scan_oi_periods"] == "15m,1h,5m"
     assert scanner.last_profile.meta["oi_cache_hits"] == 6
     assert scanner.last_profile.meta["funding_cache_hits"] == 2

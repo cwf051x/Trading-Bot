@@ -11,7 +11,7 @@ import time
 from typing import Any, Iterable
 
 from app.alerts.display import display_symbol
-from app.alerts.rule_config import load_radar_rule_config
+from app.alerts.rule_config import apply_settings_overrides, load_radar_rule_config
 from app.alerts.signal_models import MarketMetrics, MinuteRunnerState, MinuteRunnerStats
 from app.alerts.telegram_formatter import format_pct, format_price
 from app.storage.sqlite import SQLiteStorage
@@ -99,7 +99,7 @@ class MinuteRunnerEmailGate:
 
     def claim(self, symbol: str, trend_id: str) -> EmailGateResult:
         """Claim one symbol/trend email slot if limits allow.
-        在符号趋势和全局限频允许时占用邮件发送名额。
+        在符号趋势和全局限频允许时登记一次待发送尝试。
         """
 
         if not bool(getattr(self.settings, "minute_runner_email_enabled", False)):
@@ -124,11 +124,27 @@ class MinuteRunnerEmailGate:
         if len(recent_hour) >= max_per_hour:
             self._record_skip(symbol, trend_id, "global_hourly_limit")
             return EmailGateResult(False, "global_hourly_limit")
+        self.storage.update_minute_runner_email_status(
+            symbol,
+            email_send_status="claimed",
+            email_skip_reason=None,
+        )
+        return EmailGateResult(True, "claimed")
+
+    def mark_sent(self, symbol: str, trend_id: str) -> None:
+        """Commit a successful email send to global and trend limit state.
+        只有真实发送成功后，才写入全局限频和趋势已发送字段。
+        """
+
+        state = self.storage.get_alert_state(MINUTE_RUNNER_EMAIL_SYMBOL) or {}
+        metadata = state.get("metadata_json") if isinstance(state.get("metadata_json"), dict) else {}
+        sent_times = [int(item) for item in metadata.get("sent_times", []) if item]
+        recent_hour = [item for item in sent_times if self.now_ms - item < 3_600_000]
         updated_times = [*recent_hour, self.now_ms]
         self.storage.upsert_alert_state(
             {
                 "symbol": MINUTE_RUNNER_EMAIL_SYMBOL,
-                "state": "minute_runner_email_claimed",
+                "state": "minute_runner_email_sent",
                 "last_alert_type": "MINUTE_RUNNER_EMAIL",
                 "last_alert_score": 0,
                 "last_alert_price": 0.0,
@@ -144,10 +160,20 @@ class MinuteRunnerEmailGate:
             symbol,
             last_email_sent_at=self.now_ms,
             email_sent_for_trend_id=trend_id,
-            email_send_status="claimed",
+            email_send_status="sent",
             email_skip_reason=None,
         )
-        return EmailGateResult(True, "claimed")
+
+    def mark_failed(self, symbol: str, reason: str) -> None:
+        """Record a failed attempt without consuming global or trend quota.
+        记录发送失败，但不占用全局限频，也不标记趋势已发送。
+        """
+
+        self.storage.update_minute_runner_email_status(
+            symbol,
+            email_send_status="failed",
+            email_skip_reason=reason,
+        )
 
     def _ensure_symbol_row(self, symbol: str, trend_id: str) -> None:
         if self.storage.get_minute_runner_state(symbol) is not None:
@@ -185,6 +211,7 @@ class MinuteRunnerManager:
         self.settings = settings
         if not hasattr(self.settings, "radar_rule_config"):
             object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
+        apply_settings_overrides(self.settings.radar_rule_config, self.settings)
         self.email_sender = email_sender or MinuteRunnerEmailSender(settings)
 
     def process(self, rows: Iterable[MarketMetrics | tuple[str, float, MinuteRunnerStats | None]], now_ms: int | None = None) -> None:
@@ -214,6 +241,8 @@ class MinuteRunnerManager:
 
     def _upsert(self, symbol: str, price: float, stats: MinuteRunnerStats, previous: dict[str, Any] | None, now_ms: int) -> bool:
         previous_state = str(previous.get("state")) if previous else ""
+        previous_trend_id = str(previous.get("trend_id") or "") if previous else ""
+        trend_changed = previous is None or previous_trend_id != stats.trend_id
         state_changed = previous_state != stats.state
         trend_started_at = _trend_started_at(stats)
         first_pool_at = now_ms if stats.state in {MinuteRunnerState.POOL.value, MinuteRunnerState.EARLY_CONFIRMED.value, MinuteRunnerState.MATURE_CONFIRMED.value} else None
@@ -230,11 +259,11 @@ class MinuteRunnerManager:
                 "trend_age_minutes": stats.trend_age_minutes,
                 "first_pool_at": first_pool_at,
                 "confirmed_at": confirmed_at,
-                "last_state_change_at": now_ms if state_changed else (previous or {}).get("last_state_change_at"),
+                "last_state_change_at": now_ms if (state_changed or trend_changed) else (previous or {}).get("last_state_change_at"),
                 "last_score_update_at": now_ms,
                 "last_price": price,
-                "entry_price": price if previous is None else previous.get("entry_price"),
-                "highest_price": max(price, float((previous or {}).get("highest_price") or 0.0)),
+                "entry_price": price if trend_changed else previous.get("entry_price"),
+                "highest_price": price if trend_changed else max(price, float((previous or {}).get("highest_price") or 0.0)),
                 "pullback_from_high": stats.pullback_from_high,
                 "price_change_1h": stats.price_change_1h,
                 "volume_ratio_15m": stats.volume_ratio_15m,
@@ -314,13 +343,10 @@ class MinuteRunnerManager:
             subject = _format_email_subject(symbol, stats, price)
             body = _format_email_body(symbol, stats, price)
             result = self.email_sender.send(subject, body)
-            self.storage.update_minute_runner_email_status(
-                symbol,
-                last_email_sent_at=now_ms if result.sent else None,
-                email_sent_for_trend_id=stats.trend_id if result.sent else None,
-                email_send_status="sent" if result.sent else "failed",
-                email_skip_reason=None if result.sent else result.reason,
-            )
+            if result.sent:
+                gate.mark_sent(symbol, stats.trend_id)
+            else:
+                gate.mark_failed(symbol, result.reason)
 
 
 def build_minute_runner_digest(storage: SQLiteStorage, now_ms: int | None = None, top_n: int = 8, min_score: float = 72) -> MinuteRunnerDigest | None:

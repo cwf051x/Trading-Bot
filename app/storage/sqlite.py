@@ -878,13 +878,25 @@ class SQLiteStorage:
                     trend_id = excluded.trend_id,
                     trend_started_at = excluded.trend_started_at,
                     trend_age_minutes = excluded.trend_age_minutes,
-                    first_pool_at = COALESCE(minute_runner_states.first_pool_at, excluded.first_pool_at),
-                    confirmed_at = COALESCE(minute_runner_states.confirmed_at, excluded.confirmed_at),
+                    first_pool_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.first_pool_at
+                        ELSE COALESCE(minute_runner_states.first_pool_at, excluded.first_pool_at)
+                    END,
+                    confirmed_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.confirmed_at
+                        ELSE COALESCE(minute_runner_states.confirmed_at, excluded.confirmed_at)
+                    END,
                     last_state_change_at = excluded.last_state_change_at,
                     last_score_update_at = excluded.last_score_update_at,
                     last_price = excluded.last_price,
-                    entry_price = COALESCE(minute_runner_states.entry_price, excluded.entry_price),
-                    highest_price = MAX(COALESCE(minute_runner_states.highest_price, 0), COALESCE(excluded.highest_price, 0)),
+                    entry_price = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.entry_price
+                        ELSE COALESCE(minute_runner_states.entry_price, excluded.entry_price)
+                    END,
+                    highest_price = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.highest_price
+                        ELSE MAX(COALESCE(minute_runner_states.highest_price, 0), COALESCE(excluded.highest_price, 0))
+                    END,
                     pullback_from_high = excluded.pullback_from_high,
                     price_change_1h = excluded.price_change_1h,
                     volume_ratio_15m = excluded.volume_ratio_15m,
@@ -894,10 +906,22 @@ class SQLiteStorage:
                     distance_to_ma25_5m = excluded.distance_to_ma25_5m,
                     risk_tags_json = excluded.risk_tags_json,
                     reasons_json = excluded.reasons_json,
-                    last_email_sent_at = COALESCE(excluded.last_email_sent_at, minute_runner_states.last_email_sent_at),
-                    email_sent_for_trend_id = COALESCE(excluded.email_sent_for_trend_id, minute_runner_states.email_sent_for_trend_id),
-                    email_send_status = COALESCE(excluded.email_send_status, minute_runner_states.email_send_status),
-                    email_skip_reason = COALESCE(excluded.email_skip_reason, minute_runner_states.email_skip_reason),
+                    last_email_sent_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.last_email_sent_at
+                        ELSE COALESCE(excluded.last_email_sent_at, minute_runner_states.last_email_sent_at)
+                    END,
+                    email_sent_for_trend_id = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_sent_for_trend_id
+                        ELSE COALESCE(excluded.email_sent_for_trend_id, minute_runner_states.email_sent_for_trend_id)
+                    END,
+                    email_send_status = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_send_status
+                        ELSE COALESCE(excluded.email_send_status, minute_runner_states.email_send_status)
+                    END,
+                    email_skip_reason = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_skip_reason
+                        ELSE COALESCE(excluded.email_skip_reason, minute_runner_states.email_skip_reason)
+                    END,
                     metadata_json = excluded.metadata_json
                 """,
                 (

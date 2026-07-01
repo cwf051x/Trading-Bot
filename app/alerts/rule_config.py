@@ -191,6 +191,16 @@ def load_radar_rule_config(path: Path | str = Path("config/radar_rules.yaml")) -
     return config
 
 
+def apply_settings_overrides(config: dict[str, Any], settings: Any) -> dict[str, Any]:
+    """Apply environment-level rule switches on top of YAML config.
+    将环境变量级别的规则开关同步到 YAML 配置之后的最终配置。
+    """
+
+    if not bool(getattr(settings, "minute_runner_enabled", True)):
+        config.setdefault("minute_runner", {})["enabled"] = False
+    return config
+
+
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge nested dictionaries.
     递归合并嵌套配置字典。

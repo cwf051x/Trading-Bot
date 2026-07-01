@@ -13,8 +13,10 @@ from app.alerts.minute_runner import (
     build_minute_runner_digest,
 )
 from app.alerts.rule_config import DEFAULT_RADAR_RULE_CONFIG
+from app.alerts.rules.minute_runner import MinuteRunnerRule
+from app.alerts.signal_models import MinuteRunnerStats
 from app.config import Settings
-from app.data.market_snapshot import build_minute_runner_stats
+from app.data.minute_runner_snapshot import build_minute_runner_stats
 from app.exchange.binance import Kline, OpenInterestPoint
 from app.storage.sqlite import SQLiteStorage
 
@@ -35,6 +37,34 @@ class CapturingEmailSender:
     def send(self, subject: str, body: str):
         self.messages.append((subject, body))
         return type("EmailResult", (), {"sent": True, "reason": "sent"})()
+
+
+def make_stats(**overrides) -> MinuteRunnerStats:
+    """Create a compact MinuteRunnerStats row for manager persistence tests.
+    为状态持久化测试构造最小的单边上涨指标。
+    """
+
+    defaults = {
+        "trend_age_minutes": 75,
+        "runner_score": 90,
+        "ranking_score": 108,
+        "state": MinuteRunnerState.EARLY_CONFIRMED.value,
+        "email_should_send": True,
+        "price_change_15m": 0.08,
+        "price_change_30m": 0.15,
+        "price_change_1h": 0.28,
+        "volume_ratio_15m": 2.4,
+        "volume_ratio_5m": 2.0,
+        "oi_change_30m": 0.06,
+        "oi_change_45m": 0.07,
+        "oi_change_1h": 0.10,
+        "distance_to_ma25_5m": 0.08,
+        "pullback_from_high": 0.02,
+        "trend_id": "trend-old",
+        "reasons": ["测试趋势"],
+    }
+    defaults.update(overrides)
+    return MinuteRunnerStats(**defaults)
 
 
 def make_runner_5m_klines(
@@ -111,10 +141,15 @@ def make_oi_history(*, total_change: float = 0.08, bars: int = 30) -> list[OpenI
     return rows
 
 
+def test_minute_runner_rule_does_not_request_unused_3m_timeframe() -> None:
+    rule = MinuteRunnerRule(Settings(_env_file=None))
+
+    assert rule.required_timeframes() == {"5m", "15m", "1h"}
+
+
 def test_minute_runner_stats_identifies_early_confirmed_and_email_candidate() -> None:
     klines_5m = make_runner_5m_klines(trend_start_index=102, per_bar_change=0.012)
     stats = build_minute_runner_stats(
-        klines_3m=[],
         klines_5m=klines_5m,
         klines_15m=make_15m_from_5m(klines_5m),
         klines_1h=make_1h_klines(change_1h=0.28),
@@ -134,7 +169,6 @@ def test_minute_runner_stats_identifies_early_confirmed_and_email_candidate() ->
 def test_minute_runner_overheat_does_not_allow_email() -> None:
     klines_5m = make_runner_5m_klines(trend_start_index=96, per_bar_change=0.025, last_distance=0.10)
     stats = build_minute_runner_stats(
-        klines_3m=[],
         klines_5m=klines_5m,
         klines_15m=make_15m_from_5m(klines_5m),
         klines_1h=make_1h_klines(change_1h=0.68),
@@ -157,7 +191,6 @@ def test_minute_runner_broken_when_price_loses_ma25_twice() -> None:
     klines_5m[-1] = replace(klines_5m[-1], open=ma25_anchor * 0.984, close=ma25_anchor * 0.975, high=ma25_anchor * 0.990, low=ma25_anchor * 0.960, volume=5200)
 
     stats = build_minute_runner_stats(
-        klines_3m=[],
         klines_5m=klines_5m,
         klines_15m=make_15m_from_5m(klines_5m),
         klines_1h=make_1h_klines(change_1h=0.20),
@@ -178,6 +211,7 @@ def test_minute_runner_email_gate_limits_symbol_trend_and_global_cooldown(tmp_pa
     gate = MinuteRunnerEmailGate(storage, Settings(_env_file=None, MINUTE_RUNNER_EMAIL_ENABLED=True), now_ms=1_000_000)
 
     first = gate.claim("IN/USDT:USDT", "IN-1")
+    gate.mark_sent("IN/USDT:USDT", "IN-1")
     same_trend = gate.claim("IN/USDT:USDT", "IN-1")
     global_limited = gate.claim("AAA/USDT:USDT", "AAA-1")
 
@@ -187,6 +221,25 @@ def test_minute_runner_email_gate_limits_symbol_trend_and_global_cooldown(tmp_pa
     assert global_limited.allowed is False
     assert global_limited.reason == "global_cooldown"
     assert storage.get_minute_runner_state("AAA/USDT:USDT")["email_skip_reason"] == "global_cooldown"
+
+
+def test_minute_runner_email_failure_does_not_consume_global_or_trend_limit(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "runner.sqlite")
+    storage.initialize()
+    gate = MinuteRunnerEmailGate(storage, Settings(_env_file=None, MINUTE_RUNNER_EMAIL_ENABLED=True), now_ms=1_000_000)
+
+    first = gate.claim("IN/USDT:USDT", "IN-1")
+    gate.mark_failed("IN/USDT:USDT", "email_send_failed")
+    retry_same_trend = gate.claim("IN/USDT:USDT", "IN-1")
+    other_symbol = gate.claim("AAA/USDT:USDT", "AAA-1")
+
+    assert first.allowed is True
+    assert retry_same_trend.allowed is True
+    assert other_symbol.allowed is True
+    row = storage.get_minute_runner_state("IN/USDT:USDT")
+    assert row["last_email_sent_at"] is None
+    assert row["email_sent_for_trend_id"] is None
+    assert row["email_send_status"] == "claimed"
 
 
 def test_minute_runner_digest_sorts_confirmed_before_pool_and_risk_section(tmp_path) -> None:
@@ -225,7 +278,6 @@ def test_minute_runner_manager_sends_digest_and_m2e_email(tmp_path) -> None:
     manager = MinuteRunnerManager(storage, notifier, settings, email_sender=email_sender)
     klines_5m = make_runner_5m_klines(trend_start_index=102, per_bar_change=0.012)
     stats = build_minute_runner_stats(
-        klines_3m=[],
         klines_5m=klines_5m,
         klines_15m=make_15m_from_5m(klines_5m),
         klines_1h=make_1h_klines(change_1h=0.28),
@@ -243,3 +295,48 @@ def test_minute_runner_manager_sends_digest_and_m2e_email(tmp_path) -> None:
     row = storage.get_minute_runner_state("IN/USDT:USDT")
     assert row["state"] == "M2E"
     assert row["email_sent_for_trend_id"] == row["trend_id"]
+
+
+def test_minute_runner_manager_resets_trend_scoped_fields_when_trend_changes(tmp_path) -> None:
+    storage = SQLiteStorage(tmp_path / "runner.sqlite")
+    storage.initialize()
+    manager = MinuteRunnerManager(
+        storage,
+        CapturingNotifier(),
+        Settings(_env_file=None, MINUTE_RUNNER_EMAIL_ENABLED=True),
+        email_sender=CapturingEmailSender(),
+    )
+
+    manager.process([("IN/USDT:USDT", 10.0, make_stats(trend_id="trend-old"))], now_ms=1_000_000)
+    old_row = storage.get_minute_runner_state("IN/USDT:USDT")
+    assert old_row["email_sent_for_trend_id"] == "trend-old"
+    assert old_row["highest_price"] == 10.0
+
+    manager.process(
+        [
+            (
+                "IN/USDT:USDT",
+                7.0,
+                make_stats(
+                    trend_id="trend-new",
+                    state=MinuteRunnerState.POOL.value,
+                    runner_score=76,
+                    ranking_score=82,
+                    email_should_send=False,
+                ),
+            )
+        ],
+        now_ms=2_000_000,
+    )
+
+    row = storage.get_minute_runner_state("IN/USDT:USDT")
+    assert row["trend_id"] == "trend-new"
+    assert row["entry_price"] == 7.0
+    assert row["highest_price"] == 7.0
+    assert row["first_pool_at"] == 2_000_000
+    assert row["confirmed_at"] is None
+    assert row["last_state_change_at"] == 2_000_000
+    assert row["last_email_sent_at"] is None
+    assert row["email_sent_for_trend_id"] is None
+    assert row["email_send_status"] is None
+    assert row["email_skip_reason"] is None

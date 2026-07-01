@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, TypeVar
 
 from app.alerts.alert_rules import AlertRuleEngine
 from app.alerts.profiling import CycleProfiler
-from app.alerts.rule_config import load_radar_rule_config
+from app.alerts.rule_config import apply_settings_overrides, load_radar_rule_config
 from app.data.market_data_service import MarketDataService
 from app.data.market_snapshot import aggregate_klines, build_market_metrics, compute_timeframe_stats, pct_change
 from app.data.symbol_universe import filter_symbol_universe, normalize_symbol, parse_symbol_list
@@ -65,6 +65,7 @@ class MarketScanner:
         self._cache_stats = self.market_data.cache_stats
         if not hasattr(self.settings, "radar_rule_config"):
             object.__setattr__(self.settings, "radar_rule_config", load_radar_rule_config())
+        apply_settings_overrides(self.settings.radar_rule_config, self.settings)
 
     def scan(self) -> list[Any]:
         """Scan the configured market universe once.
