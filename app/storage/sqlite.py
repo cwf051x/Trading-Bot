@@ -376,10 +376,11 @@ class SQLiteStorage:
         where_sql, params = self._build_table_where(columns, search_columns or [], filters or {}, query)
         safe_limit = max(1, min(int(limit), 100))
         safe_offset = max(0, int(offset))
+        secondary_sort = "id" if "id" in columns else "symbol"
         with self.connect() as connection:
             total_row = connection.execute(f"SELECT COUNT(*) AS count FROM {table}{where_sql}", params).fetchone()
             rows = connection.execute(
-                f"SELECT * FROM {table}{where_sql} ORDER BY {sort_by} {direction_sql}, id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM {table}{where_sql} ORDER BY {sort_by} {direction_sql}, {secondary_sort} DESC LIMIT ? OFFSET ?",
                 [*params, safe_limit, safe_offset],
             ).fetchall()
         return [dict(row) for row in rows], int(total_row["count"] if total_row else 0)
