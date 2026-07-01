@@ -111,38 +111,56 @@ def test_build_telegram_notifiers_can_disable_order_channel() -> None:
 def test_run_paper_cycle_creates_order_once(tmp_path):
     storage = SQLiteStorage(tmp_path / "paper.sqlite")
     storage.initialize()
-    notifier = FakeNotifier()
+    alert_notifier = FakeNotifier()
+    order_notifier = FakeNotifier()
     from app.execution.paper import PaperTradingEngine
 
-    paper = PaperTradingEngine(storage=storage, notifier=notifier)
+    paper = PaperTradingEngine(storage=storage, notifier=order_notifier)
     risk = RiskManager(account_equity=10_000)
 
-    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, notifier, FakeSettings())
-    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, notifier, FakeSettings())
+    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, order_notifier, FakeSettings())
+    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, order_notifier, FakeSettings())
 
     assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
-    assert len(notifier.signals) == 2
-    assert len(notifier.orders) == 1
+    assert alert_notifier.signals == []
+    assert len(order_notifier.signals) == 2
+    assert len(order_notifier.orders) == 1
 
 
 def test_run_paper_cycle_handles_multiple_symbols(tmp_path):
     storage = SQLiteStorage(tmp_path / "paper.sqlite")
     storage.initialize()
-    notifier = FakeNotifier()
+    order_notifier = FakeNotifier()
     from app.execution.paper import PaperTradingEngine
 
-    paper = PaperTradingEngine(storage=storage, notifier=notifier)
+    paper = PaperTradingEngine(storage=storage, notifier=order_notifier)
     risk = RiskManager(account_equity=10_000)
 
     class MultiSettings(FakeSettings):
         active_symbols = ["ETH/USDT:USDT", "SOL/USDT:USDT"]
 
-    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, notifier, MultiSettings())
+    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, order_notifier, MultiSettings())
 
     assert len(storage.get_open_positions("ETH/USDT:USDT")) == 1
     assert len(storage.get_open_positions("SOL/USDT:USDT")) == 1
-    assert len(notifier.signals) == 2
-    assert len(notifier.orders) == 2
+    assert len(order_notifier.signals) == 2
+    assert len(order_notifier.orders) == 2
+
+
+def test_run_paper_cycle_sends_risk_blocks_to_order_notifier(tmp_path):
+    storage = SQLiteStorage(tmp_path / "paper.sqlite")
+    storage.initialize()
+    order_notifier = FakeNotifier()
+    from app.execution.paper import PaperTradingEngine
+
+    paper = PaperTradingEngine(storage=storage, notifier=order_notifier)
+    risk = RiskManager(account_equity=10_000, max_open_positions=0)
+
+    run_paper_cycle(FakeClient(), paper, FakeStrategy(), risk, order_notifier, FakeSettings())
+
+    assert len(order_notifier.signals) == 1
+    assert len(order_notifier.blocks) == 1
+    assert order_notifier.blocks[0][1] == "max open positions reached"
 
 
 def test_run_paper_cycle_uses_only_closed_candles_for_mark_to_market_and_signal(monkeypatch, tmp_path):
@@ -212,3 +230,50 @@ def test_paper_mode_sends_cycle_errors_to_order_notifier(monkeypatch, tmp_path):
 
     assert alert_notifier.errors == []
     assert order_notifier.errors == ["Paper cycle failed 1x consecutively: binance timeout"]
+
+
+def test_paper_mode_routes_strategy_signal_notifications_to_order_notifier(monkeypatch, tmp_path):
+    class FullSettings(FakeTelegramSettings):
+        database_path = tmp_path / "paper.sqlite"
+        strategy_breakout_window = 20
+        strategy_volume_window = 20
+        strategy_volume_multiplier = 2
+        btc_drop_threshold_15m = 0.03
+        strategy_stop_loss_pct = 0.02
+        strategy_take_profit_pct = 0.04
+        account_equity = 10_000
+        risk_per_trade_pct = 0.01
+        risk_max_symbol_position_pct = 0.05
+        risk_max_total_exposure_pct = 0.50
+        risk_max_open_positions = 10
+        risk_max_consecutive_losses = 3
+        risk_loss_cooldown_seconds = 3600
+        paper_leverage = 1
+        paper_fee_rate = 0
+        paper_slippage_pct = 0
+        paper_funding_rate = 0
+        binance_api_key = ""
+        binance_api_secret = ""
+        exchange_network_mode = "direct"
+        exchange_proxy = ""
+        exchange_request_retries = 0
+        exchange_retry_delay_seconds = 0
+        default_symbol = "ETH/USDT:USDT"
+        active_symbols = ["ETH/USDT:USDT"]
+        poll_interval_seconds = 60
+
+    alert_notifier = FakeNotifier()
+    order_notifier = FakeNotifier()
+    routed = {}
+
+    def capture_run_paper_cycle(*args, **_kwargs):
+        routed["notifier"] = args[4]
+
+    monkeypatch.setattr(sys, "argv", ["trading-bot", "--mode", "paper", "--once"])
+    monkeypatch.setattr(main_module, "get_settings", lambda: FullSettings())
+    monkeypatch.setattr(main_module, "build_telegram_notifiers", lambda _settings: (alert_notifier, order_notifier))
+    monkeypatch.setattr(main_module, "run_paper_cycle", capture_run_paper_cycle)
+
+    main_module.run()
+
+    assert routed["notifier"] is order_notifier

@@ -195,7 +195,7 @@ def test_radar_creates_paper_order_for_actionable_alert(tmp_path) -> None:
     assert orders[0]["entry_price"] == 1.0
     assert orders[0]["stop_loss"] == 0.98
     assert orders[0]["take_profit"] == 1.04
-    assert orders[0]["quantity"] == 1000.0
+    assert orders[0]["quantity"] == 500.0
     assert "alert SHORT_TERM_SURGE" in orders[0]["reason"]
 
 

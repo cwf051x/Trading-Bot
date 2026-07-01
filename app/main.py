@@ -169,7 +169,8 @@ def run() -> None:
         paper_error_streak = 0
         while True:
             try:
-                run_paper_cycle(client, paper, strategy, risk_manager, notifier, settings)
+                # Paper 策略信号和风控拦截属于执行链路，和雷达提醒分流到订单通道。
+                run_paper_cycle(client, paper, strategy, risk_manager, order_notifier, settings)
                 paper_error_streak = 0
             except KeyboardInterrupt:
                 logger.info("Paper mode stopped by user")

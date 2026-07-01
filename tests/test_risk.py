@@ -23,13 +23,13 @@ def test_risk_blocks_missing_stop_loss() -> None:
     assert "stop_loss" in decision.reason
 
 
-def test_risk_caps_position_to_ten_percent_equity() -> None:
+def test_risk_caps_position_to_five_percent_equity() -> None:
     manager = RiskManager(account_equity=10_000)
 
     decision = manager.evaluate(signal(stop_loss=99))
 
     assert decision.allowed is True
-    assert decision.notional_value == 1_000
+    assert decision.notional_value == 500
 
 
 def test_risk_blocks_after_three_losses() -> None:
@@ -73,8 +73,8 @@ def test_risk_blocks_when_max_open_positions_reached(tmp_path) -> None:
 def test_risk_blocks_total_exposure_limit(tmp_path) -> None:
     storage = SQLiteStorage(tmp_path / "risk.sqlite")
     storage.initialize()
-    order_id = storage.create_order("BTC/USDT:USDT", "long", 15, 100, 95, 110, "open", "existing", 1)
-    storage.create_position(order_id, "BTC/USDT:USDT", "long", 15, 100, 95, 110, 1)
+    order_id = storage.create_order("BTC/USDT:USDT", "long", 16, 100, 95, 110, "open", "existing", 1)
+    storage.create_position(order_id, "BTC/USDT:USDT", "long", 16, 100, 95, 110, 1)
     manager = RiskManager(account_equity=10_000, storage=storage, max_total_exposure_pct=0.20)
 
     decision = manager.evaluate(signal(stop_loss=99))
