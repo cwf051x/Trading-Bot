@@ -126,9 +126,9 @@ def run() -> None:
     risk_manager = RiskManager(
         account_equity=settings.account_equity,
         risk_per_trade_pct=getattr(settings, "risk_per_trade_pct", 0.01),
-        max_symbol_position_pct=getattr(settings, "risk_max_symbol_position_pct", 0.10),
+        max_symbol_position_pct=getattr(settings, "risk_max_symbol_position_pct", 0.05),
         max_total_exposure_pct=getattr(settings, "risk_max_total_exposure_pct", 0.50),
-        max_open_positions=getattr(settings, "risk_max_open_positions", 5),
+        max_open_positions=getattr(settings, "risk_max_open_positions", 10),
         max_consecutive_losses=getattr(settings, "risk_max_consecutive_losses", 3),
         loss_cooldown_seconds=getattr(settings, "risk_loss_cooldown_seconds", 3600),
         btc_drop_threshold_15m=settings.btc_drop_threshold_15m,

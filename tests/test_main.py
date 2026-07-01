@@ -277,3 +277,49 @@ def test_paper_mode_routes_strategy_signal_notifications_to_order_notifier(monke
     main_module.run()
 
     assert routed["notifier"] is order_notifier
+
+
+def test_paper_mode_risk_manager_uses_new_fallback_defaults(monkeypatch, tmp_path):
+    class PartialRiskSettings(FakeTelegramSettings):
+        database_path = tmp_path / "paper.sqlite"
+        strategy_breakout_window = 20
+        strategy_volume_window = 20
+        strategy_volume_multiplier = 2
+        btc_drop_threshold_15m = 0.03
+        strategy_stop_loss_pct = 0.02
+        strategy_take_profit_pct = 0.04
+        account_equity = 10_000
+        risk_per_trade_pct = 0.01
+        risk_max_total_exposure_pct = 0.50
+        risk_max_consecutive_losses = 3
+        risk_loss_cooldown_seconds = 3600
+        paper_leverage = 1
+        paper_fee_rate = 0
+        paper_slippage_pct = 0
+        paper_funding_rate = 0
+        binance_api_key = ""
+        binance_api_secret = ""
+        exchange_network_mode = "direct"
+        exchange_proxy = ""
+        exchange_request_retries = 0
+        exchange_retry_delay_seconds = 0
+        default_symbol = "ETH/USDT:USDT"
+        active_symbols = ["ETH/USDT:USDT"]
+        poll_interval_seconds = 60
+
+    captured = {}
+
+    class CapturingRiskManager:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(sys, "argv", ["trading-bot", "--mode", "paper", "--once"])
+    monkeypatch.setattr(main_module, "get_settings", lambda: PartialRiskSettings())
+    monkeypatch.setattr(main_module, "RiskManager", CapturingRiskManager)
+    monkeypatch.setattr(main_module, "build_telegram_notifiers", lambda _settings: (FakeNotifier(), FakeNotifier()))
+    monkeypatch.setattr(main_module, "run_paper_cycle", lambda *_args, **_kwargs: None)
+
+    main_module.run()
+
+    assert captured["max_symbol_position_pct"] == 0.05
+    assert captured["max_open_positions"] == 10
