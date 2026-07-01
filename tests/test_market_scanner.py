@@ -29,6 +29,7 @@ def disable_extra_rule_fetches(settings: Settings) -> Settings:
         **DEFAULT_RADAR_RULE_CONFIG,
         "hourly_trend": {**DEFAULT_RADAR_RULE_CONFIG["hourly_trend"], "enabled": False},
         "pump_pullback_second_wave": {**DEFAULT_RADAR_RULE_CONFIG["pump_pullback_second_wave"], "enabled": False},
+        "minute_runner": {**DEFAULT_RADAR_RULE_CONFIG["minute_runner"], "enabled": False},
     }
     object.__setattr__(settings, "radar_rule_config", config)
     return settings
@@ -124,6 +125,24 @@ def test_scanner_fetches_only_enabled_rule_requirements() -> None:
     assert sum(client.klines_calls[(symbol, "1h")] for symbol in candidate_symbols) == 0
     assert set(client.oi_period_calls) == {("COIN0/USDT:USDT", "5m"), ("COIN1/USDT:USDT", "5m")}
     assert not client.funding_calls
+
+
+def test_minute_runner_env_disabled_removes_rule_scan_cost() -> None:
+    client = CountingMarketClient(ticker_count=6)
+    settings = Settings(
+        _env_file=None,
+        ALERT_CANDIDATE_TOP_N=3,
+        ALERT_RULE_HOURLY_TREND_ENABLED=False,
+        MINUTE_RUNNER_ENABLED=False,
+    )
+    scanner = MarketScanner(client, settings)
+
+    scan_plan = scanner._build_scan_plan()
+
+    assert "3m" not in scan_plan.timeframes
+    assert scan_plan.timeframes == {"5m", "15m", "1h"}
+    assert scan_plan.oi_periods == {"5m", "15m", "1h"}
+    assert scan_plan.requires_funding_rate is True
 
 
 def test_candidate_pool_merges_gainers_volume_and_recent_change_buckets() -> None:

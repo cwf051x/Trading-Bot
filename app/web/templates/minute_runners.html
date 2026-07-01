@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .runner-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(116px, 1fr));
+    gap: 10px;
+    margin: 18px 0 14px;
+  }
+  .runner-kpi {
+    min-height: 68px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+  }
+  .runner-kpi span {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .runner-kpi strong {
+    display: block;
+    margin-top: 6px;
+    color: var(--text);
+    font-size: 20px;
+    line-height: 1;
+  }
+  .runner-table {
+    table-layout: fixed;
+  }
+  .runner-table th,
+  .runner-table td {
+    white-space: normal;
+    vertical-align: middle;
+  }
+  .runner-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .runner-symbol {
+    display: grid;
+    gap: 4px;
+  }
+  .runner-symbol strong {
+    color: var(--text);
+    font-size: 14px;
+  }
+  .runner-symbol span,
+  .runner-muted {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .runner-score {
+    display: grid;
+    gap: 4px;
+  }
+  .runner-score strong {
+    color: var(--text);
+    font-size: 16px;
+  }
+  .runner-metrics {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  .runner-metric {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    color: #CBD5E1;
+    font-size: 12px;
+    line-height: 1.25;
+  }
+  .runner-metric span {
+    color: var(--muted-2);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .runner-metric strong {
+    min-width: 0;
+    color: #CBD5E1;
+    font-size: 12px;
+    font-weight: 750;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .runner-positive {
+    color: var(--buy) !important;
+  }
+  .runner-negative {
+    color: var(--sell) !important;
+  }
+  .runner-state {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-soft);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+  }
+  .runner-state.m2e,
+  .runner-state.m2m {
+    border-color: rgba(32, 201, 151, 0.36);
+    background: var(--buy-soft);
+    color: var(--buy);
+  }
+  .runner-state.m3 {
+    border-color: rgba(242, 184, 75, 0.38);
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .runner-state.m4 {
+    border-color: rgba(255, 92, 115, 0.42);
+    background: var(--sell-soft);
+    color: var(--sell);
+  }
+  .runner-email {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  .runner-note {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .runner-time {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .runner-risk {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 980px) {
+    .runner-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 640px) {
+    .runner-summary {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>分钟单边上涨池</h1>
+    <p class="lead">Minute Runner Radar 当前池状态。这里只展示行情预警状态，不代表自动交易指令。</p>
+  </div>
+</div>
+
+<div class="runner-summary">
+  <div class="runner-kpi">
+    <span>总数</span>
+    <strong>{{ table.total }}</strong>
+  </div>
+  <div class="runner-kpi">
+    <span>本页 M2</span>
+    <strong>{{ state_counts.M2E + state_counts.M2M }}</strong>
+  </div>
+  <div class="runner-kpi">
+    <span>本页 M3</span>
+    <strong>{{ state_counts.M3 }}</strong>
+  </div>
+  <div class="runner-kpi">
+    <span>本页 M4</span>
+    <strong>{{ state_counts.M4 }}</strong>
+  </div>
+  <div class="runner-kpi">
+    <span>页码</span>
+    <strong>{{ table.page }}/{{ table.total_pages }}</strong>
+  </div>
+</div>
+
+{% include "partials/table_controls.html" %}
+
+{% if rows %}
+<div class="table-wrap fit-table">
+  <table class="runner-table">
+    <colgroup>
+      <col style="width: 9%">
+      <col style="width: 10%">
+      <col style="width: 8%">
+      <col style="width: 8%">
+      <col style="width: 8%">
+      <col style="width: 8%">
+      <col style="width: 10%">
+      <col style="width: 8%">
+      <col style="width: 9%">
+      <col style="width: 10%">
+      <col style="width: 12%">
+    </colgroup>
+    <thead>
+      <tr>
+        <th><a class="sort-link" href="{{ table.sort_url('symbol') }}">币种</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('state') }}">状态</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('runner_score') }}">分数</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('last_price') }}">价格</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('price_change_1h') }}">1h</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('trend_age_minutes') }}">趋势</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('oi_change_30m') }}">OI</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('volume_ratio_15m') }}">量能</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('distance_to_ma25_5m') }}">结构</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('email_send_status') }}">邮件 / 风险</a></th>
+        <th><a class="sort-link" href="{{ table.sort_url('last_score_update_at') }}">更新</a></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>
+          <div class="runner-symbol">
+            <strong>{{ row.symbol|symbol_base }}</strong>
+            <span>USDT-M</span>
+          </div>
+        </td>
+        <td>
+          {% if row.state == "M2E" %}
+          <span class="runner-state m2e">M2E 早期确信</span>
+          {% elif row.state == "M2M" %}
+          <span class="runner-state m2m">M2M 成熟</span>
+          {% elif row.state == "M3" %}
+          <span class="runner-state m3">M3 过热</span>
+          {% elif row.state == "M4" %}
+          <span class="runner-state m4">M4 破位</span>
+          {% elif row.state == "M1" %}
+          <span class="runner-state">M1 单边池</span>
+          {% else %}
+          <span class="runner-state">M0 启动</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="runner-score">
+            <strong>{{ row.runner_score|compact_number(1) }}</strong>
+            <span class="runner-muted">排名分 {{ row.ranking_score|compact_number(1) }}</span>
+          </div>
+        </td>
+        <td><strong>{{ row.last_price|compact_price }}</strong></td>
+        <td>
+          <strong class="{% if row.price_change_1h and row.price_change_1h > 0 %}runner-positive{% elif row.price_change_1h and row.price_change_1h < 0 %}runner-negative{% endif %}">
+            {{ row.price_change_1h|percent }}
+          </strong>
+        </td>
+        <td>
+          <div class="runner-metrics">
+            <div class="runner-metric"><span>时长</span><strong>{{ row.trend_age_minutes }}m</strong></div>
+            <div class="runner-metric"><span>回撤</span><strong>{{ row.pullback_from_high|percent }}</strong></div>
+          </div>
+        </td>
+        <td>
+          <div class="runner-metrics">
+            <div class="runner-metric"><span>30m</span><strong>{{ row.oi_change_30m|percent }}</strong></div>
+            <div class="runner-metric"><span>1h</span><strong>{{ row.oi_change_1h|percent }}</strong></div>
+          </div>
+        </td>
+        <td>
+          <strong>{{ row.volume_ratio_15m|compact_number(2) }}x</strong>
+        </td>
+        <td>
+          <div class="runner-metrics">
+            <div class="runner-metric"><span>MA25</span><strong>{{ row.distance_to_ma25_5m|percent }}</strong></div>
+            <div class="runner-metric"><span>高点</span><strong>{{ row.pullback_from_high|percent }}</strong></div>
+          </div>
+        </td>
+        <td>
+          <div class="runner-email">
+            {% if row.email_sent_for_trend_id %}
+            <span class="badge ok">已发</span>
+            {% elif row.email_send_status == "failed" %}
+            <span class="badge danger">失败</span>
+            {% elif row.email_skip_reason %}
+            <span class="badge warn">跳过</span>
+            {% elif row.email_send_status == "claimed" %}
+            <span class="badge warn">发送中</span>
+            {% else %}
+            <span class="badge">未发</span>
+            {% endif %}
+            {% if row.email_skip_reason %}
+            <span class="runner-note">{{ row.email_skip_reason }}</span>
+            {% elif row.risk_tags_json %}
+            <span class="runner-risk">{{ row.risk_tags_json|join(" / ") }}</span>
+            {% else %}
+            <span class="runner-risk">-</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="runner-time">{{ row.last_score_update_at|datetime_ms }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">暂无单边上涨池状态。</div>
+{% endif %}
+
+{% include "partials/pagination.html" %}
+{% endblock %}

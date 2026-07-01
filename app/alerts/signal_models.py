@@ -43,6 +43,19 @@ class AlertLevel(str, Enum):
     IGNORE = "IGNORE"
 
 
+class MinuteRunnerState(str, Enum):
+    """Durable states for the minute-level one-way runner pool.
+    分钟级单边上涨池的持久化状态。
+    """
+
+    SPARK = "M0"
+    POOL = "M1"
+    EARLY_CONFIRMED = "M2E"
+    MATURE_CONFIRMED = "M2M"
+    OVERHEAT = "M3"
+    BROKEN = "M4"
+
+
 @dataclass(frozen=True)
 class TimeframeStats:
     """Compact derived statistics for one timeframe.
@@ -179,6 +192,46 @@ class PumpPullbackStats:
 
 
 @dataclass(frozen=True)
+class MinuteRunnerStats:
+    """Derived fields for the minute-level one-way runner radar.
+    分钟级单边上涨雷达使用的派生字段。
+    """
+
+    trend_age_minutes: int = 0
+    runner_score: float = 0.0
+    ranking_score: float = 0.0
+    state: str = MinuteRunnerState.SPARK.value
+    email_should_send: bool = False
+    price_change_15m: float | None = None
+    price_change_30m: float | None = None
+    price_change_1h: float | None = None
+    volume_ratio_15m: float | None = None
+    volume_ratio_5m: float | None = None
+    oi_change_30m: float | None = None
+    oi_change_45m: float | None = None
+    oi_change_1h: float | None = None
+    ma7_5m: float | None = None
+    ma25_5m: float | None = None
+    ma99_5m: float | None = None
+    ma7_15m: float | None = None
+    ma25_15m: float | None = None
+    close_above_ma7_5m_count_12: int = 0
+    close_above_ma25_5m_count_12: int = 0
+    bullish_5m_count_12: int = 0
+    higher_low_count_5m: int = 0
+    pullback_from_high: float | None = None
+    distance_to_ma25_5m: float | None = None
+    long_upper_wick_count_5m: int = 0
+    volume_stall: bool = False
+    oi_price_divergence: bool = False
+    is_overheated: bool = False
+    broken_reason: str | None = None
+    risk_tags: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+    trend_id: str = ""
+
+
+@dataclass(frozen=True)
 class MarketMetrics:
     """Derived market metrics consumed by rules and scoring.
     供规则和评分使用的行情派生指标。
@@ -202,6 +255,7 @@ class MarketMetrics:
     resonance: ResonanceStats | None = None
     trend: HourlyTrendStats | None = None
     pump_pullback: PumpPullbackStats | None = None
+    minute_runner: MinuteRunnerStats | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

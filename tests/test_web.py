@@ -83,6 +83,95 @@ def test_alerts_page_renders(monkeypatch, tmp_path: Path) -> None:
     assert "行情雷达提醒" in response.text
 
 
+def test_minute_runners_page_renders_current_pool(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    storage.upsert_minute_runner_state(
+        {
+            "symbol": "IN/USDT:USDT",
+            "state": "M2E",
+            "runner_score": 89,
+            "ranking_score": 110,
+            "trend_id": "trend-1",
+            "trend_age_minutes": 85,
+            "last_score_update_at": 1_700_000_000_000,
+            "last_price": 0.123,
+            "price_change_1h": 0.28,
+            "volume_ratio_15m": 2.6,
+            "oi_change_30m": 0.052,
+            "oi_change_1h": 0.068,
+            "distance_to_ma25_5m": 0.084,
+            "pullback_from_high": 0.02,
+            "risk_tags_json": [],
+            "metadata_json": {},
+        }
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/minute-runners")
+
+    assert response.status_code == 200
+    assert "分钟单边上涨池" in response.text
+    assert "M2E 早期确信" in response.text
+    table_body = response.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert ">IN</strong>" in table_body
+    assert "IN/USDT:USDT" not in table_body
+
+
+def test_minute_runners_page_supports_search_sorting_and_pagination(monkeypatch, tmp_path: Path) -> None:
+    database_path = tmp_path / "web.sqlite"
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("WEB_ADMIN_TOKEN", "")
+    storage = SQLiteStorage(database_path)
+    storage.initialize()
+    for symbol, state, score in [
+        ("IN/USDT:USDT", "M2E", 91),
+        ("NOM/USDT:USDT", "M1", 77),
+        ("ZBT/USDT:USDT", "M4", 60),
+    ]:
+        storage.upsert_minute_runner_state(
+            {
+                "symbol": symbol,
+                "state": state,
+                "runner_score": score,
+                "ranking_score": score + 10,
+                "trend_id": f"{symbol}-trend",
+                "trend_age_minutes": 80,
+                "last_score_update_at": 1_700_000_000_000,
+                "last_price": 0.123,
+                "price_change_1h": 0.18,
+                "volume_ratio_15m": 2.1,
+                "oi_change_30m": 0.04,
+                "oi_change_1h": 0.06,
+                "distance_to_ma25_5m": 0.08,
+                "pullback_from_high": 0.02,
+                "risk_tags_json": [],
+                "metadata_json": {},
+            }
+        )
+    client = TestClient(create_app())
+
+    searched = client.get("/minute-runners?q=IN&sort=runner_score&direction=desc")
+    paged = client.get("/minute-runners?per_page=1&page=2&sort=symbol&direction=asc")
+
+    assert searched.status_code == 200
+    assert 'class="table-toolbar"' in searched.text
+    assert 'name="q" value="IN"' in searched.text
+    assert 'href="/minute-runners?page=1&amp;per_page=25&amp;sort=runner_score&amp;direction=asc&amp;q=IN"' in searched.text
+    searched_body = searched.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert ">IN</strong>" in searched_body
+    assert ">NOM</strong>" not in searched_body
+
+    assert paged.status_code == 200
+    assert "Page 2 / 3" in paged.text
+    paged_body = paged.text.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+    assert ">NOM</strong>" in paged_body
+    assert ">IN</strong>" not in paged_body
+
+
 def test_alerts_page_uses_compact_chinese_table_display(monkeypatch, tmp_path: Path) -> None:
     database_path = tmp_path / "web.sqlite"
     monkeypatch.setenv("DATABASE_PATH", str(database_path))

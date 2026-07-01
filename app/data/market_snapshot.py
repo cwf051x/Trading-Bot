@@ -7,7 +7,14 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from app.alerts.signal_models import HourlyTrendStats, MarketMetrics, PumpPullbackStats, ResonanceStats, TimeframeStats
+from app.alerts.signal_models import (
+    HourlyTrendStats,
+    MarketMetrics,
+    PumpPullbackStats,
+    ResonanceStats,
+    TimeframeStats,
+)
+from app.data.minute_runner_snapshot import build_minute_runner_stats
 from app.exchange.binance import Kline, OpenInterestPoint
 
 
@@ -458,7 +465,7 @@ def build_market_metrics(
     price_value = ticker.get("last") or ticker.get("close")
     if not symbol or price_value is None:
         return None
-    required = required_timeframes or {"1m", "3m", "5m", "15m", "1h"}
+    required = required_timeframes or {"1m", "5m", "15m", "1h"}
     if any(len(klines_by_timeframe.get(timeframe, [])) < 5 for timeframe in required):
         return None
     klines_1m = klines_by_timeframe.get("1m", [])
@@ -470,6 +477,7 @@ def build_market_metrics(
     volume_price_oi_enabled = bool(rule_config.get("volume_price_oi", {}).get("enabled", True))
     hourly_trend_enabled = bool(rule_config.get("hourly_trend", {}).get("enabled"))
     pump_pullback_enabled = bool(rule_config.get("pump_pullback_second_wave", {}).get("enabled"))
+    minute_runner_enabled = bool(rule_config.get("minute_runner", {}).get("enabled", True))
     return MarketMetrics(
         symbol=symbol,
         price=float(price_value),
@@ -489,5 +497,16 @@ def build_market_metrics(
         resonance=build_resonance_stats(klines_5m, oi_history or []) if volume_price_oi_enabled else None,
         trend=build_hourly_trend_stats(klines_1h, klines_15m, trend_oi_history or [], funding_rate=funding_rate) if hourly_trend_enabled else None,
         pump_pullback=build_pump_pullback_stats(klines_15m, klines_1h, klines_5m, pump_oi_history_15m or [], oi_history or [], rule_config.get("pump_pullback_second_wave", {})) if pump_pullback_enabled else None,
+        minute_runner=build_minute_runner_stats(
+            klines_5m=klines_5m,
+            klines_15m=klines_15m,
+            klines_1h=klines_1h,
+            oi_history_5m=oi_history or [],
+            funding_rate=funding_rate,
+            btc_15m_change=btc_15m_change,
+            config=rule_config.get("minute_runner", {}),
+        )
+        if minute_runner_enabled
+        else None,
         raw={"ticker": ticker},
     )

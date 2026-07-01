@@ -121,6 +121,59 @@ DEFAULT_RADAR_RULE_CONFIG: dict[str, Any] = {
             "bypass_cooldown": True,
         },
     },
+    "minute_runner": {
+        "enabled": True,
+        "pool": {
+            "min_score": 72,
+            "high_quality_score": 82,
+            "early_confirmed_score": 88,
+            "mature_confirmed_score": 93,
+            "remove_score": 65,
+        },
+        "trend_age": {
+            "early_confirmed_min_minutes": 60,
+            "early_confirmed_max_minutes": 180,
+            "sweet_spot_min_minutes": 60,
+            "sweet_spot_max_minutes": 120,
+        },
+        "momentum": {
+            "one_hour_change_min": 0.12,
+            "one_hour_change_sweet_max": 0.45,
+            "one_hour_change_overheat": 0.60,
+        },
+        "volume": {
+            "min_15m_volume_ratio": 1.5,
+            "confirmed_15m_volume_ratio": 1.8,
+        },
+        "oi": {
+            "min_30m_change": 0.02,
+            "confirmed_30m_change": 0.04,
+            "confirmed_45m_change": 0.05,
+            "confirmed_1h_change": 0.06,
+            "max_negative_1h_change": -0.02,
+        },
+        "risk": {
+            "btc_15m_dump_threshold": -0.008,
+            "max_distance_to_ma25_5m_for_email": 0.15,
+            "overheat_distance_to_ma25_5m": 0.20,
+            "confirmed_pullback_downgrade": 0.12,
+            "pool_remove_pullback": 0.15,
+        },
+        "telegram_digest": {
+            "enabled": True,
+            "interval_seconds": 300,
+            "no_change_interval_seconds": 900,
+            "top_n": 8,
+            "min_score_to_show": 72,
+        },
+        "email": {
+            "enabled": False,
+            "min_score": 88,
+            "top_rank": 5,
+            "global_cooldown_seconds": 1800,
+            "max_per_hour": 2,
+        },
+    },
 }
 
 
@@ -135,6 +188,16 @@ def load_radar_rule_config(path: Path | str = Path("config/radar_rules.yaml")) -
         return config
     loaded = parse_simple_yaml(config_path.read_text(encoding="utf-8"))
     deep_merge(config, loaded)
+    return config
+
+
+def apply_settings_overrides(config: dict[str, Any], settings: Any) -> dict[str, Any]:
+    """Apply environment-level rule switches on top of YAML config.
+    将环境变量级别的规则开关同步到 YAML 配置之后的最终配置。
+    """
+
+    if not bool(getattr(settings, "minute_runner_enabled", True)):
+        config.setdefault("minute_runner", {})["enabled"] = False
     return config
 
 

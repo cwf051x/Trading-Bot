@@ -562,6 +562,53 @@ def create_app() -> FastAPI:
             ),
         )
 
+    @app.get("/minute-runners")
+    def minute_runners_page(request: Request, _: None = Depends(require_admin)) -> Response:
+        """Render current Minute Runner pool states.
+        展示当前分钟级单边上涨池状态。
+        """
+
+        settings = Settings()
+        storage = build_storage(settings)
+        state = table_state(
+            request,
+            allowed_sort={
+                "symbol",
+                "state",
+                "runner_score",
+                "ranking_score",
+                "trend_age_minutes",
+                "last_score_update_at",
+                "last_price",
+                "price_change_1h",
+                "volume_ratio_15m",
+                "oi_change_30m",
+                "oi_change_1h",
+                "distance_to_ma25_5m",
+                "pullback_from_high",
+                "email_send_status",
+            },
+            default_sort="ranking_score",
+        )
+        rows, state = query_table_page(
+            storage,
+            state,
+            "minute_runner_states",
+            search_columns=["symbol", "state", "trend_id", "email_send_status", "email_skip_reason", "risk_tags_json", "reasons_json"],
+        )
+        rows = [SQLiteStorage._decode_minute_runner_row(row) for row in rows]
+        state_counts = {
+            "M2E": sum(1 for row in rows if row.get("state") == "M2E"),
+            "M2M": sum(1 for row in rows if row.get("state") == "M2M"),
+            "M3": sum(1 for row in rows if row.get("state") == "M3"),
+            "M4": sum(1 for row in rows if row.get("state") == "M4"),
+        }
+        return templates.TemplateResponse(
+            request,
+            "minute_runners.html",
+            base_context(request, settings, rows=rows, table=state, state_counts=state_counts, title="分钟单边上涨池"),
+        )
+
     @app.get("/logs")
     def logs_page(request: Request, _: None = Depends(require_admin)) -> Response:
         """Render local operation logs for radar and paper-trading diagnostics.

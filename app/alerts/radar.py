@@ -11,6 +11,7 @@ from typing import Any
 from app.alerts.alert_rules import AlertRuleEngine
 from app.alerts.alert_state import AlertStateManager
 from app.alerts.digest import AlertDigestManager
+from app.alerts.minute_runner import MinuteRunnerManager
 from app.alerts.profiling import CycleProfiler
 from app.alerts.scanner import MarketScanner
 from app.alerts.scoring import level_from_score
@@ -79,6 +80,7 @@ class MarketAlertRadar:
         self.rules = AlertRuleEngine(settings)
         self.state = AlertStateManager(storage, settings)
         self.digest = AlertDigestManager(storage, notifier, settings)
+        self.minute_runner = MinuteRunnerManager(storage, notifier, settings)
         self._last_error_sent_at = 0.0
 
     def run_once(self) -> list[AlertSignal]:
@@ -148,6 +150,11 @@ class MarketAlertRadar:
                     self.digest.maybe_send()
                 except Exception as exc:
                     logger.warning("Alert digest failed without blocking radar loop: %s", exc)
+            with profiler.measure("minute_runner"):
+                try:
+                    self.minute_runner.process(metrics_rows)
+                except Exception as exc:
+                    logger.warning("Minute Runner Radar failed without blocking radar loop: %s", exc)
             return sorted(alerts, key=lambda item: item.score, reverse=True)
         except Exception as exc:
             if "metrics_rows" not in locals():

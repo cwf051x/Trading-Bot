@@ -153,6 +153,46 @@ class SQLiteStorage:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS minute_runner_states (
+                    symbol TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    runner_score REAL NOT NULL,
+                    ranking_score REAL NOT NULL,
+                    trend_id TEXT,
+                    trend_started_at INTEGER,
+                    trend_age_minutes INTEGER NOT NULL DEFAULT 0,
+                    first_pool_at INTEGER,
+                    confirmed_at INTEGER,
+                    last_state_change_at INTEGER,
+                    last_score_update_at INTEGER,
+                    last_price REAL,
+                    entry_price REAL,
+                    highest_price REAL,
+                    pullback_from_high REAL,
+                    price_change_1h REAL,
+                    volume_ratio_15m REAL,
+                    oi_change_30m REAL,
+                    oi_change_45m REAL,
+                    oi_change_1h REAL,
+                    distance_to_ma25_5m REAL,
+                    risk_tags_json TEXT NOT NULL,
+                    reasons_json TEXT NOT NULL,
+                    last_email_sent_at INTEGER,
+                    email_sent_for_trend_id TEXT,
+                    email_send_status TEXT,
+                    email_skip_reason TEXT,
+                    metadata_json TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_minute_runner_states_score
+                ON minute_runner_states(state, ranking_score DESC, runner_score DESC)
+                """
+            )
 
     def _raise_for_duplicate_open_positions(self, connection: sqlite3.Connection) -> None:
         """Fail clearly when old data would violate the open-position unique index.
@@ -336,10 +376,11 @@ class SQLiteStorage:
         where_sql, params = self._build_table_where(columns, search_columns or [], filters or {}, query)
         safe_limit = max(1, min(int(limit), 100))
         safe_offset = max(0, int(offset))
+        secondary_sort = "id" if "id" in columns else "symbol"
         with self.connect() as connection:
             total_row = connection.execute(f"SELECT COUNT(*) AS count FROM {table}{where_sql}", params).fetchone()
             rows = connection.execute(
-                f"SELECT * FROM {table}{where_sql} ORDER BY {sort_by} {direction_sql}, id DESC LIMIT ? OFFSET ?",
+                f"SELECT * FROM {table}{where_sql} ORDER BY {sort_by} {direction_sql}, {secondary_sort} DESC LIMIT ? OFFSET ?",
                 [*params, safe_limit, safe_offset],
             ).fetchall()
         return [dict(row) for row in rows], int(total_row["count"] if total_row else 0)
@@ -391,6 +432,36 @@ class SQLiteStorage:
                 "target_2",
                 "sent_to_telegram",
                 "raw_json",
+            },
+            "minute_runner_states": {
+                "symbol",
+                "state",
+                "runner_score",
+                "ranking_score",
+                "trend_id",
+                "trend_started_at",
+                "trend_age_minutes",
+                "first_pool_at",
+                "confirmed_at",
+                "last_state_change_at",
+                "last_score_update_at",
+                "last_price",
+                "entry_price",
+                "highest_price",
+                "pullback_from_high",
+                "price_change_1h",
+                "volume_ratio_15m",
+                "oi_change_30m",
+                "oi_change_45m",
+                "oi_change_1h",
+                "distance_to_ma25_5m",
+                "risk_tags_json",
+                "reasons_json",
+                "last_email_sent_at",
+                "email_sent_for_trend_id",
+                "email_send_status",
+                "email_skip_reason",
+                "metadata_json",
             },
         }
 
@@ -780,3 +851,173 @@ class SQLiteStorage:
                 (timestamp_ms, metadata_json),
             )
             return True
+
+    def upsert_minute_runner_state(self, state: dict[str, Any]) -> None:
+        """Insert or update one Minute Runner pool row.
+        插入或更新单个交易对的分钟级单边上涨池状态。
+        """
+
+        risk_tags_json = json.dumps(state.get("risk_tags_json") or state.get("risk_tags") or [], ensure_ascii=False)
+        reasons_json = json.dumps(state.get("reasons_json") or state.get("reasons") or [], ensure_ascii=False)
+        metadata_json = json.dumps(state.get("metadata_json") or {}, ensure_ascii=False)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO minute_runner_states(
+                    symbol, state, runner_score, ranking_score, trend_id, trend_started_at, trend_age_minutes,
+                    first_pool_at, confirmed_at, last_state_change_at, last_score_update_at, last_price,
+                    entry_price, highest_price, pullback_from_high, price_change_1h, volume_ratio_15m,
+                    oi_change_30m, oi_change_45m, oi_change_1h, distance_to_ma25_5m, risk_tags_json,
+                    reasons_json, last_email_sent_at, email_sent_for_trend_id, email_send_status,
+                    email_skip_reason, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    state = excluded.state,
+                    runner_score = excluded.runner_score,
+                    ranking_score = excluded.ranking_score,
+                    trend_id = excluded.trend_id,
+                    trend_started_at = excluded.trend_started_at,
+                    trend_age_minutes = excluded.trend_age_minutes,
+                    first_pool_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.first_pool_at
+                        ELSE COALESCE(minute_runner_states.first_pool_at, excluded.first_pool_at)
+                    END,
+                    confirmed_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.confirmed_at
+                        ELSE COALESCE(minute_runner_states.confirmed_at, excluded.confirmed_at)
+                    END,
+                    last_state_change_at = excluded.last_state_change_at,
+                    last_score_update_at = excluded.last_score_update_at,
+                    last_price = excluded.last_price,
+                    entry_price = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.entry_price
+                        ELSE COALESCE(minute_runner_states.entry_price, excluded.entry_price)
+                    END,
+                    highest_price = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.highest_price
+                        ELSE MAX(COALESCE(minute_runner_states.highest_price, 0), COALESCE(excluded.highest_price, 0))
+                    END,
+                    pullback_from_high = excluded.pullback_from_high,
+                    price_change_1h = excluded.price_change_1h,
+                    volume_ratio_15m = excluded.volume_ratio_15m,
+                    oi_change_30m = excluded.oi_change_30m,
+                    oi_change_45m = excluded.oi_change_45m,
+                    oi_change_1h = excluded.oi_change_1h,
+                    distance_to_ma25_5m = excluded.distance_to_ma25_5m,
+                    risk_tags_json = excluded.risk_tags_json,
+                    reasons_json = excluded.reasons_json,
+                    last_email_sent_at = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.last_email_sent_at
+                        ELSE COALESCE(excluded.last_email_sent_at, minute_runner_states.last_email_sent_at)
+                    END,
+                    email_sent_for_trend_id = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_sent_for_trend_id
+                        ELSE COALESCE(excluded.email_sent_for_trend_id, minute_runner_states.email_sent_for_trend_id)
+                    END,
+                    email_send_status = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_send_status
+                        ELSE COALESCE(excluded.email_send_status, minute_runner_states.email_send_status)
+                    END,
+                    email_skip_reason = CASE
+                        WHEN minute_runner_states.trend_id IS NOT excluded.trend_id THEN excluded.email_skip_reason
+                        ELSE COALESCE(excluded.email_skip_reason, minute_runner_states.email_skip_reason)
+                    END,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    state["symbol"],
+                    state["state"],
+                    float(state.get("runner_score") or 0.0),
+                    float(state.get("ranking_score") or 0.0),
+                    state.get("trend_id"),
+                    state.get("trend_started_at"),
+                    int(state.get("trend_age_minutes") or 0),
+                    state.get("first_pool_at"),
+                    state.get("confirmed_at"),
+                    state.get("last_state_change_at"),
+                    state.get("last_score_update_at"),
+                    state.get("last_price"),
+                    state.get("entry_price"),
+                    state.get("highest_price"),
+                    state.get("pullback_from_high"),
+                    state.get("price_change_1h"),
+                    state.get("volume_ratio_15m"),
+                    state.get("oi_change_30m"),
+                    state.get("oi_change_45m"),
+                    state.get("oi_change_1h"),
+                    state.get("distance_to_ma25_5m"),
+                    risk_tags_json,
+                    reasons_json,
+                    state.get("last_email_sent_at"),
+                    state.get("email_sent_for_trend_id"),
+                    state.get("email_send_status"),
+                    state.get("email_skip_reason"),
+                    metadata_json,
+                ),
+            )
+
+    def update_minute_runner_email_status(
+        self,
+        symbol: str,
+        *,
+        last_email_sent_at: int | None = None,
+        email_sent_for_trend_id: str | None = None,
+        email_send_status: str | None = None,
+        email_skip_reason: str | None = None,
+    ) -> None:
+        """Update email status fields without disturbing the runner stats.
+        只更新邮件状态字段，不改动池子行情指标。
+        """
+
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE minute_runner_states
+                SET last_email_sent_at = COALESCE(?, last_email_sent_at),
+                    email_sent_for_trend_id = COALESCE(?, email_sent_for_trend_id),
+                    email_send_status = COALESCE(?, email_send_status),
+                    email_skip_reason = ?
+                WHERE symbol = ?
+                """,
+                (last_email_sent_at, email_sent_for_trend_id, email_send_status, email_skip_reason, symbol),
+            )
+
+    def get_minute_runner_state(self, symbol: str) -> dict[str, Any] | None:
+        """Return one Minute Runner state row.
+        返回单个交易对的单边上涨池状态。
+        """
+
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM minute_runner_states WHERE symbol = ?", (symbol,)).fetchone()
+        return self._decode_minute_runner_row(row) if row else None
+
+    def list_minute_runner_states(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return current Minute Runner rows ordered for operator display.
+        返回当前单边上涨池状态，按池榜顺序展示。
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM minute_runner_states
+                ORDER BY ranking_score DESC, runner_score DESC, last_score_update_at DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [self._decode_minute_runner_row(row) for row in rows]
+
+    @staticmethod
+    def _decode_minute_runner_row(row: sqlite3.Row) -> dict[str, Any]:
+        """Decode JSON columns from a minute_runner_states row.
+        解析单边上涨池状态中的 JSON 字段。
+        """
+
+        payload = dict(row)
+        for key, fallback in (("risk_tags_json", []), ("reasons_json", []), ("metadata_json", {})):
+            try:
+                payload[key] = json.loads(payload.get(key) or json.dumps(fallback))
+            except json.JSONDecodeError:
+                payload[key] = fallback
+        return payload
